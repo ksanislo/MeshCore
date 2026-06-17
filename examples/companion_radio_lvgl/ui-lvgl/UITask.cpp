@@ -9450,6 +9450,21 @@ void UITask::buildSettingsTab(lv_obj_t* parent) {
   lv_obj_t* prevlbl = lv_label_create(prevbtn);
   lv_label_set_text(prevlbl, LV_SYMBOL_AUDIO " Preview");
   lv_obj_center(prevlbl);
+
+#ifdef HAS_SD_CARD
+  _set_ringtone_dl_btn = lv_btn_create(body);
+  lv_obj_set_width(_set_ringtone_dl_btn, LV_PCT(100));
+  lv_obj_set_style_bg_color(_set_ringtone_dl_btn, lv_color_hex(UI_ACCENT), 0);
+  lv_obj_add_event_cb(_set_ringtone_dl_btn, ringtone_dl_cb, LV_EVENT_CLICKED, NULL);
+  _set_ringtone_dl_lbl = lv_label_create(_set_ringtone_dl_btn);
+  lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_DOWNLOAD " Download ringtones");
+  lv_obj_center(_set_ringtone_dl_lbl);
+  _set_ringtone_status = lv_label_create(body);
+  lv_obj_set_width(_set_ringtone_status, LV_PCT(100));
+  lv_label_set_long_mode(_set_ringtone_status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(_set_ringtone_status, lv_color_hex(DIM_HEX), 0);
+  lv_label_set_text(_set_ringtone_status, "");
+#endif
 #endif
 
   body = _set_pane_body[CAT_POWER];   // Power & Lock
@@ -10026,6 +10041,9 @@ void UITask::populateSettings() {
     lv_slider_set_value(_set_volume_slider, vol, LV_ANIM_OFF);
   }
   if (_set_ringtone_dd) syncRingtoneDropdown(_set_ringtone_dd, _node_prefs->ringtone_name);
+#ifdef HAS_SD_CARD
+  refreshRingtoneDownload();
+#endif
 #endif
 
   // Telemetry policy dropdowns (mode value maps 1:1 to the dropdown index).
@@ -11775,6 +11793,50 @@ void UITask::ringtone_preview_cb(lv_event_t* e) {
   _instance->_buzzer.quiet(false);
   _instance->_buzzer.play(rtttl);
 }
+
+#ifdef HAS_SD_CARD
+void UITask::refreshRingtoneDownload() {
+  if (!_set_ringtone_dl_btn) return;
+  bool busy = RingtonePack::busy();
+  char ip[24], mask[24], gw[24], dns[24];
+  mproxy::wifiIpInfo(ip, mask, gw, dns, 24);
+  bool hasIp  = ip[0] != 0;
+  bool sdOk   = SdSvc::ready();
+
+  if (busy) {
+    lv_obj_clear_state(_set_ringtone_dl_btn, LV_STATE_DISABLED);
+    lv_obj_set_style_bg_color(_set_ringtone_dl_btn, lv_color_hex(UI_ALERT), 0);
+    if (_set_ringtone_dl_lbl) lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_CLOSE " Cancel");
+  } else {
+    if (hasIp && sdOk) lv_obj_clear_state(_set_ringtone_dl_btn, LV_STATE_DISABLED);
+    else               lv_obj_add_state(_set_ringtone_dl_btn, LV_STATE_DISABLED);
+    lv_obj_set_style_bg_color(_set_ringtone_dl_btn, lv_color_hex(UI_ACCENT), 0);
+    if (_set_ringtone_dl_lbl) lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_DOWNLOAD " Download ringtones");
+  }
+  if (_set_ringtone_status) {
+    char sb[64];
+    if (!sdOk)             strcpy(sb, "insert + mount SD first");
+    else if (!hasIp && !busy) strcpy(sb, "enable WiFi first");
+    else                   RingtonePack::status(sb, sizeof(sb));
+    lv_label_set_text(_set_ringtone_status, sb);
+  }
+  // Rebuild the dropdown after a successful download so new files appear immediately
+  if (!busy && _set_ringtone_dd) {
+    buildRingtoneOptions(_set_ringtone_dd);
+    if (_node_prefs) syncRingtoneDropdown(_set_ringtone_dd, _node_prefs->ringtone_name);
+  }
+}
+
+void UITask::ringtone_dl_cb(lv_event_t* e) {
+  (void)e;
+  if (!_instance) return;
+  if (RingtonePack::busy()) { RingtonePack::cancel(); _instance->showToast("Cancelling..."); return; }
+  if (!SdSvc::ready())      { _instance->showToast("Mount the SD card first"); return; }
+  RingtonePack::start();
+  _instance->showToast("Downloading ringtones...");
+}
+#endif // HAS_SD_CARD
+
 #endif // HAS_BUZZER
 
 void UITask::set_history_cb(lv_event_t* e) {
@@ -13340,6 +13402,14 @@ void UITask::loop() {
 
 #ifdef HAS_BUZZER
   _buzzer.loop();   // non-blocking RTTTL state-stepping; run every pass, even display-off
+#ifdef HAS_SD_CARD
+  // Poll ringtone download status once per second so the button label stays current.
+  static uint32_t s_rt_poll_ms = 0;
+  if (RingtonePack::busy() && (uint32_t)(now - s_rt_poll_ms) >= 1000) {
+    s_rt_poll_ms = now;
+    refreshRingtoneDownload();
+  }
+#endif
 #endif
 
   pollTrackball();  // T-Deck nav ball -> scroll the active list/chat (no-op without a ball)
