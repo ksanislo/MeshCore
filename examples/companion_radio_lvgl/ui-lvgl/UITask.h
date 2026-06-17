@@ -11,6 +11,10 @@
 #ifdef HAS_SD_CARD
   #include "SdMessageStore.h"
 #endif
+#include <helpers/ui/buzzer.h>        // defines HAS_BUZZER / BUZZER_IS_I2S
+#ifdef BUZZER_IS_I2S
+  #include <helpers/ui/I2SBuzzer.h>
+#endif
 
 #ifndef CHAT_HISTORY_CAP
   #define CHAT_HISTORY_CAP 48
@@ -110,8 +114,12 @@ class UITask : public AbstractUITask {
   lv_timer_t*     _banner_timer;        // auto-dismiss one-shot
   char            _banner_key[CHAT_PEER_NAME_MAX];  // conv-key the banner opens on tap
   UIEventType     _pending_chime;       // chime deferred to end of loop() (post-draw) so notes don't stretch
-#ifdef PIN_BUZZER
-  genericBuzzer   _buzzer;              // RTTTL notification chimes (gated by buzzer_quiet)
+#ifdef HAS_BUZZER
+  #ifdef BUZZER_IS_I2S
+    I2SBuzzer     _buzzer;
+  #else
+    genericBuzzer _buzzer;
+  #endif
 #endif
 
   // Sorted/filtered view of the address book (favourites first, then recency).
@@ -464,6 +472,8 @@ class UITask : public AbstractUITask {
   lv_obj_t*       _set_history_chk;     // persist chat history to SD toggle
   lv_obj_t*       _set_notify_chk;      // master new-message notifications toggle
   lv_obj_t*       _set_mutedef_chk;     // "Mute by default" (opt-in per conversation)
+  lv_obj_t*       _set_volume_slider;   // buzzer volume 0-10
+  lv_obj_t*       _set_ringtone_dd;     // ringtone selection dropdown
   lv_obj_t*       _set_kb;
   lv_obj_t*       _set_active_ta;       // settings textarea currently being edited
   // Settings categories. The pane index is the single source of truth shared by
@@ -1138,6 +1148,14 @@ private:
   void setHomeChrome(bool show);   // show/hide the logo header (+resize tabview) for pane drill-in
   static void set_notify_cb(lv_event_t* e);
   static void set_mutedef_cb(lv_event_t* e);
+#ifdef HAS_BUZZER
+  void        buildRingtoneOptions(lv_obj_t* dd);
+  void        syncRingtoneDropdown(lv_obj_t* dd, const char* name);
+  const char* resolveRingtone(const char* name);
+  static void set_volume_cb(lv_event_t* e);
+  static void set_ringtone_cb(lv_event_t* e);
+  static void ringtone_preview_cb(lv_event_t* e);
+#endif
   // Phase-1 additions: telemetry policy + advanced toggles + share-me.
   static void set_telem_cb(lv_event_t* e);          // user_data 0/1/2 = base/loc/env
   static void set_pwrmon_cb(lv_event_t* e);         // power-monitor select
@@ -1360,7 +1378,7 @@ public:
       _set_mqtt_en(NULL), _set_mqtt_host(NULL), _set_mqtt_port(NULL), _set_mqtt_user(NULL), _set_mqtt_pw(NULL),
       _set_mqtt_topic(NULL), _set_mqtt_clientid(NULL), _set_mqtt_subscribe(NULL),
       _set_mqtt_tls(NULL), _set_mqtt_rx(NULL), _set_mqtt_tx(NULL), _set_mqtt_status(NULL),
-      _set_avatar_dd(NULL), _set_theme_dd(NULL), _set_mention_chk(NULL), _set_hashtag_chk(NULL), _set_chsender_chk(NULL), _set_history_chk(NULL), _set_notify_chk(NULL), _set_mutedef_chk(NULL), _set_kb(NULL),
+      _set_avatar_dd(NULL), _set_theme_dd(NULL), _set_mention_chk(NULL), _set_hashtag_chk(NULL), _set_chsender_chk(NULL), _set_history_chk(NULL), _set_notify_chk(NULL), _set_mutedef_chk(NULL), _set_volume_slider(NULL), _set_ringtone_dd(NULL), _set_kb(NULL),
       _set_active_ta(NULL),
       _set_launcher(NULL), _set_pane{}, _set_pane_body{}, _set_active_pane(NULL),
       _set_key_ta(NULL),
@@ -1411,7 +1429,7 @@ public:
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
   bool hasDisplay() const { return _started; }
-#ifdef PIN_BUZZER
+#ifdef HAS_BUZZER
   bool isBuzzerQuiet() { return _buzzer.isQuiet(); }
 #else
   bool isBuzzerQuiet() { return true; }

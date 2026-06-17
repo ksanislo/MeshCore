@@ -120,4 +120,8 @@ struct NodePrefs {  // persisted to file
                                 // Independent of trackball_invert (scroll). Trackball boards only.
   uint8_t  tcp_companion;       // 1 = in WiFi mode, expose the companion frame protocol over TCP (port
                                 // 5000, LAN) instead of USB serial. Default 0 (off). Reboot to apply.
+  // Sound (tail-appended; 0 = unset -> defaults applied in applyAppendedPrefsDefaults).
+  uint8_t  buzzer_volume;       // 0 = muted, 1-10 = volume level; 0xFF unset -> 5
+  char     ringtone_name[24];   // built-in name (e.g. "Nokia") or SD basename "MyTune"
+                                // (resolves to /ringtones/MyTune.rtttl); "" = default (Nokia)
 };
