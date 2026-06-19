@@ -4875,18 +4875,22 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _muted_count   = mproxy::copyMutedKeys(_muted_keys, MUTE_MAX);       // seed explicit mutes from the backend
   _unmuted_count = mproxy::copyUnmutedKeys(_unmuted_keys, MUTE_MAX);   // and explicit unmutes
 
-#ifdef PIN_BUZZER
-  // Notification chimes. quiet() honors the persisted buzzer_quiet; the genericBuzzer
-  // also early-returns when quiet, so notify() needs no extra sound gate.
-  _buzzer.begin();   // NOTE: begin() unconditionally plays the startup chime (it forces quiet=false)
-  // Minimal-noises modes (mute-by-default, or the buzzer muted) should stay silent at boot
-  // too. begin() already queued the startup melody, so cancel it: play() while quiet stops the
-  // running melody and early-returns. _buzzer.loop() hasn't run yet, so nothing is audible.
+#ifdef HAS_BUZZER
+  // Apply persisted volume before begin() so the startup chime plays at the right level.
+  if (_node_prefs) {
+    uint8_t vol = (_node_prefs->buzzer_volume == 0xFF) ? 5 : _node_prefs->buzzer_volume;
+#ifdef BUZZER_IS_I2S
+    _buzzer.setVolume(vol);
+#endif
+  }
+  // begin() plays the startup chime (forces quiet=false internally).  Cancel it when the user
+  // has muted or chosen mute-by-default — play("") stops any queued melody before it's audible.
+  _buzzer.begin();
   if (_node_prefs && (_node_prefs->buzzer_quiet || _node_prefs->notify_mute_default)) {
     _buzzer.quiet(true);
-    _buzzer.play("");   // stops the just-queued startup chime
+    _buzzer.play("");
   }
-  _buzzer.quiet(_node_prefs && _node_prefs->buzzer_quiet);   // restore the intended persistent quiet state
+  _buzzer.quiet(_node_prefs && _node_prefs->buzzer_quiet);
 #endif
 
   reportCrashIfAny();   // if the last boot panicked, save a decodable report (SD or SPIFFS)
@@ -5054,12 +5058,17 @@ void UITask::sentMsg(const char* peer, const char* text) {
 }
 
 void UITask::notify(UIEventType t) {
-#ifdef PIN_BUZZER
+#ifdef HAS_BUZZER
   if (!notifyEnabled()) return;   // master toggle off -> silent (buzzer_quiet also gates internally)
   switch (t) {
     case UIEventType::contactMessage:
     case UIEventType::newContactMessage:
-      _buzzer.play("MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7");  // 3-note rising chime
+#ifdef BUZZER_IS_I2S
+      // Use the user-selected (or default) ringtone for direct messages
+      _buzzer.play(resolveRingtone(_node_prefs ? _node_prefs->ringtone_name : nullptr));
+#else
+      _buzzer.play("MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7");
+#endif
       break;
     case UIEventType::roomMessage:
     case UIEventType::channelMessage:
@@ -9420,6 +9429,44 @@ void UITask::buildSettingsTab(lv_obj_t* parent) {
   lv_obj_set_style_text_color(_set_mutedef_chk, lv_color_hex(FG_HEX), 0);
   lv_obj_add_event_cb(_set_mutedef_chk, set_mutedef_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
+#ifdef HAS_BUZZER
+  addSettingsSection(body, "Sound");
+
+  lv_obj_t* fvol = makeField(body, "Volume");
+  _set_volume_slider = lv_slider_create(fvol);
+  lv_slider_set_range(_set_volume_slider, 0, 10);
+  lv_obj_set_width(_set_volume_slider, LV_PCT(100));
+  lv_obj_add_event_cb(_set_volume_slider, set_volume_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+  lv_obj_t* frt = makeField(body, "Ringtone");
+  _set_ringtone_dd = lv_dropdown_create(frt);
+  lv_obj_set_width(_set_ringtone_dd, LV_PCT(100));
+  lv_obj_add_event_cb(_set_ringtone_dd, set_ringtone_cb, LV_EVENT_VALUE_CHANGED, NULL);
+  buildRingtoneOptions(_set_ringtone_dd);
+
+  lv_obj_t* prevbtn = lv_btn_create(body);
+  lv_obj_set_width(prevbtn, LV_PCT(100));
+  lv_obj_add_event_cb(prevbtn, ringtone_preview_cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_t* prevlbl = lv_label_create(prevbtn);
+  lv_label_set_text(prevlbl, LV_SYMBOL_AUDIO " Preview");
+  lv_obj_center(prevlbl);
+
+#ifdef HAS_SD_CARD
+  _set_ringtone_dl_btn = lv_btn_create(body);
+  lv_obj_set_width(_set_ringtone_dl_btn, LV_PCT(100));
+  lv_obj_set_style_bg_color(_set_ringtone_dl_btn, lv_color_hex(UI_ACCENT), 0);
+  lv_obj_add_event_cb(_set_ringtone_dl_btn, ringtone_dl_cb, LV_EVENT_CLICKED, NULL);
+  _set_ringtone_dl_lbl = lv_label_create(_set_ringtone_dl_btn);
+  lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_DOWNLOAD " Download ringtones");
+  lv_obj_center(_set_ringtone_dl_lbl);
+  _set_ringtone_status = lv_label_create(body);
+  lv_obj_set_width(_set_ringtone_status, LV_PCT(100));
+  lv_label_set_long_mode(_set_ringtone_status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(_set_ringtone_status, lv_color_hex(DIM_HEX), 0);
+  lv_label_set_text(_set_ringtone_status, "");
+#endif
+#endif
+
   body = _set_pane_body[CAT_POWER];   // Power & Lock
   // ===== Power & Lock =====
   addSettingsSection(body, "Power & Lock");
@@ -9988,6 +10035,16 @@ void UITask::populateSettings() {
     if (_node_prefs->notify_mute_default) lv_obj_add_state(_set_mutedef_chk, LV_STATE_CHECKED);
     else                                  lv_obj_clear_state(_set_mutedef_chk, LV_STATE_CHECKED);
   }
+#ifdef HAS_BUZZER
+  if (_set_volume_slider) {
+    uint8_t vol = (_node_prefs->buzzer_volume == 0xFF) ? 5 : _node_prefs->buzzer_volume;
+    lv_slider_set_value(_set_volume_slider, vol, LV_ANIM_OFF);
+  }
+  if (_set_ringtone_dd) syncRingtoneDropdown(_set_ringtone_dd, _node_prefs->ringtone_name);
+#ifdef HAS_SD_CARD
+  refreshRingtoneDownload();
+#endif
+#endif
 
   // Telemetry policy dropdowns (mode value maps 1:1 to the dropdown index).
   if (_set_telem_base_dd) lv_dropdown_set_selected(_set_telem_base_dd, _node_prefs->telemetry_mode_base <= 2 ? _node_prefs->telemetry_mode_base : 0);
@@ -11589,7 +11646,7 @@ void UITask::set_notify_cb(lv_event_t* e) {
   bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   _instance->_node_prefs->notify_enable = on ? 1 : 0;
   pushPrefs();
-#ifdef PIN_BUZZER
+#ifdef HAS_BUZZER
   // Master off silences the chime too (banner/wake are gated in drainEvents); the
   // separate buzzer_quiet still applies when notifications are on.
   _instance->_buzzer.quiet(!on || _instance->_node_prefs->buzzer_quiet);
@@ -11603,6 +11660,184 @@ void UITask::set_mutedef_cb(lv_event_t* e) {
   _instance->_node_prefs->notify_mute_default = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED) ? 1 : 0;
   pushPrefs();
 }
+
+#ifdef HAS_BUZZER
+// Build the ringtone dropdown options string (built-ins + any .rtttl files on SD).
+void UITask::buildRingtoneOptions(lv_obj_t* dd) {
+  if (!dd) return;
+  char opts[512];
+  int pos = 0;
+#ifdef BUZZER_IS_I2S
+  for (int i = 0; I2SBuzzer::BUILTIN_NAMES[i]; i++) {
+    if (pos) opts[pos++] = '\n';
+    int n = snprintf(opts + pos, sizeof(opts) - pos, "%s", I2SBuzzer::BUILTIN_NAMES[i]);
+    if (n > 0) pos += n;
+  }
+#else
+  // genericBuzzer has no named built-ins; offer just the single default
+  snprintf(opts, sizeof(opts), "Default");
+  pos = strlen(opts);
+#endif
+#ifdef HAS_SD_CARD
+  // Append any .rtttl files found on the SD card under /ringtones/
+  if (SdSvc::ready()) {
+    SdSvc::Lock lk;
+    FsFile dir = sd.open("/ringtones", O_RDONLY);
+    if (dir) {
+      FsFile f;
+      while (f.openNext(&dir, O_RDONLY)) {
+        char name[32];
+        f.getName(name, sizeof(name));
+        bool isDir = f.isDir();
+        f.close();
+        if (isDir) continue;
+        char* dot = strrchr(name, '.');
+        if (dot && strcasecmp(dot, ".rtttl") == 0) {
+          *dot = '\0';
+          if (pos < (int)sizeof(opts) - 2) {
+            if (pos) opts[pos++] = '\n';
+            int n = snprintf(opts + pos, sizeof(opts) - pos, "%s", name);
+            if (n > 0) pos += n;
+          }
+        }
+      }
+      dir.close();
+    }
+  }
+#endif
+  if (!pos) snprintf(opts, sizeof(opts), "Nokia");   // fallback
+  lv_dropdown_set_options(dd, opts);
+}
+
+// Select the dropdown entry matching the persisted ringtone_name.
+void UITask::syncRingtoneDropdown(lv_obj_t* dd, const char* name) {
+  if (!dd) return;
+  if (!name || !*name) { lv_dropdown_set_selected(dd, 0); return; }
+  // Scan the options string to find the matching index
+  const char* opts = lv_dropdown_get_options(dd);   // LVGL 8 returns const char*
+  int idx = 0;
+  const char* p = opts;
+  while (*p) {
+    const char* nl = strchr(p, '\n');
+    size_t len = nl ? (size_t)(nl - p) : strlen(p);
+    if (strncasecmp(p, name, len) == 0 && strlen(name) == len) {
+      lv_dropdown_set_selected(dd, (uint16_t)idx);
+      return;
+    }
+    idx++;
+    if (!nl) break;
+    p = nl + 1;
+  }
+  lv_dropdown_set_selected(dd, 0);   // not found -> first entry
+}
+
+// Resolve ringtone_name to an RTTTL string (built-in or SD file).
+const char* UITask::resolveRingtone(const char* name) {
+#ifdef BUZZER_IS_I2S
+  if (!name || !*name) return I2SBuzzer::BUILTIN_RTTTL[0];
+
+  // Try built-ins first
+  const char* r = I2SBuzzer::builtinByName(name);
+  if (r) return r;
+
+#ifdef HAS_SD_CARD
+  // Try loading from SD /ringtones/<name>.rtttl into the static buffer
+  static char sd_rtttl_buf[512];
+  char path[48];
+  snprintf(path, sizeof(path), "/ringtones/%s.rtttl", name);
+  if (SdSvc::ready()) {
+    SdSvc::Lock lk;
+    FsFile f = sd.open(path, O_RDONLY);
+    if (f) {
+      int n = (int)f.read(sd_rtttl_buf, sizeof(sd_rtttl_buf) - 1);
+      f.close();
+      if (n > 0) { sd_rtttl_buf[n] = '\0'; return sd_rtttl_buf; }
+    }
+  }
+#endif
+  return I2SBuzzer::BUILTIN_RTTTL[0];   // fallback
+#else
+  (void)name;
+  return "MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7";
+#endif
+}
+
+void UITask::set_volume_cb(lv_event_t* e) {
+  if (!_instance || !_instance->_node_prefs) return;
+  uint8_t vol = (uint8_t)lv_slider_get_value(lv_event_get_target(e));
+  _instance->_node_prefs->buzzer_volume = vol;
+  pushPrefs();
+#ifdef BUZZER_IS_I2S
+  _instance->_buzzer.setVolume(vol);
+  if (vol == 0) _instance->_buzzer.quiet(true);
+  else {
+    _instance->_buzzer.quiet(_instance->_node_prefs->buzzer_quiet);
+  }
+#endif
+}
+
+void UITask::set_ringtone_cb(lv_event_t* e) {
+  if (!_instance || !_instance->_node_prefs) return;
+  lv_obj_t* dd = lv_event_get_target(e);
+  char sel[32];
+  lv_dropdown_get_selected_str(dd, sel, sizeof(sel));
+  strncpy(_instance->_node_prefs->ringtone_name, sel, sizeof(_instance->_node_prefs->ringtone_name) - 1);
+  _instance->_node_prefs->ringtone_name[sizeof(_instance->_node_prefs->ringtone_name) - 1] = '\0';
+  pushPrefs();
+}
+
+void UITask::ringtone_preview_cb(lv_event_t* e) {
+  (void)e;
+  if (!_instance || !_instance->_node_prefs) return;
+  const char* rtttl = _instance->resolveRingtone(_instance->_node_prefs->ringtone_name);
+  _instance->_buzzer.quiet(false);
+  _instance->_buzzer.play(rtttl);
+}
+
+#ifdef HAS_SD_CARD
+void UITask::refreshRingtoneDownload() {
+  if (!_set_ringtone_dl_btn) return;
+  bool busy = RingtonePack::busy();
+  char ip[24], mask[24], gw[24], dns[24];
+  mproxy::wifiIpInfo(ip, mask, gw, dns, 24);
+  bool hasIp  = ip[0] != 0;
+  bool sdOk   = SdSvc::ready();
+
+  if (busy) {
+    lv_obj_clear_state(_set_ringtone_dl_btn, LV_STATE_DISABLED);
+    lv_obj_set_style_bg_color(_set_ringtone_dl_btn, lv_color_hex(UI_ALERT), 0);
+    if (_set_ringtone_dl_lbl) lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_CLOSE " Cancel");
+  } else {
+    if (hasIp && sdOk) lv_obj_clear_state(_set_ringtone_dl_btn, LV_STATE_DISABLED);
+    else               lv_obj_add_state(_set_ringtone_dl_btn, LV_STATE_DISABLED);
+    lv_obj_set_style_bg_color(_set_ringtone_dl_btn, lv_color_hex(UI_ACCENT), 0);
+    if (_set_ringtone_dl_lbl) lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_DOWNLOAD " Download ringtones");
+  }
+  if (_set_ringtone_status) {
+    char sb[64];
+    if (!sdOk)             strcpy(sb, "insert + mount SD first");
+    else if (!hasIp && !busy) strcpy(sb, "enable WiFi first");
+    else                   RingtonePack::status(sb, sizeof(sb));
+    lv_label_set_text(_set_ringtone_status, sb);
+  }
+  // Rebuild the dropdown after a successful download so new files appear immediately
+  if (!busy && _set_ringtone_dd) {
+    buildRingtoneOptions(_set_ringtone_dd);
+    if (_node_prefs) syncRingtoneDropdown(_set_ringtone_dd, _node_prefs->ringtone_name);
+  }
+}
+
+void UITask::ringtone_dl_cb(lv_event_t* e) {
+  (void)e;
+  if (!_instance) return;
+  if (RingtonePack::busy()) { RingtonePack::cancel(); _instance->showToast("Cancelling..."); return; }
+  if (!SdSvc::ready())      { _instance->showToast("Mount the SD card first"); return; }
+  RingtonePack::start();
+  _instance->showToast("Downloading ringtones...");
+}
+#endif // HAS_SD_CARD
+
+#endif // HAS_BUZZER
 
 void UITask::set_history_cb(lv_event_t* e) {
   if (!_instance || !_instance->_node_prefs) return;
@@ -13165,8 +13400,16 @@ void UITask::loop() {
     _last_tick_ms = now;
   }
 
-#ifdef PIN_BUZZER
+#ifdef HAS_BUZZER
   _buzzer.loop();   // non-blocking RTTTL state-stepping; run every pass, even display-off
+#ifdef HAS_SD_CARD
+  // Poll ringtone download status once per second so the button label stays current.
+  static uint32_t s_rt_poll_ms = 0;
+  if (RingtonePack::busy() && (uint32_t)(now - s_rt_poll_ms) >= 1000) {
+    s_rt_poll_ms = now;
+    refreshRingtoneDownload();
+  }
+#endif
 #endif
 
   pollTrackball();  // T-Deck nav ball -> scroll the active list/chat (no-op without a ball)
