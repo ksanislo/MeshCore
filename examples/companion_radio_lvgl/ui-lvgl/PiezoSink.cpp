@@ -32,6 +32,10 @@ bool PiezoSink::advance() {
     uint32_t durMs = (uint32_t)(durSec * 1000.0f);
     if (!durMs) durMs = 1;
     if (freq < 1.0f) noTone(PIN_PIEZO);                       // rest
+    // No duration: the note sustains until the NEXT note's tone() replaces it, so
+    // transitions are gapless even if loop() is a little late (a late loop() only
+    // stretches a note, never leaves a silent gap). The boot stuck-note case is
+    // handled by deferring the startup chime until loop() is already cycling.
     else             tone(PIN_PIEZO, (unsigned int)(freq + 0.5f));
     _note_end_ms = millis() + durMs;
     return true;

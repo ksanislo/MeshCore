@@ -120,6 +120,7 @@ class UITask : public AbstractUITask {
   lv_timer_t*     _banner_timer;        // auto-dismiss one-shot
   char            _banner_key[CHAT_PEER_NAME_MAX];  // conv-key the banner opens on tap
   UIEventType     _pending_chime;       // chime deferred to end of loop() (post-draw) so notes don't stretch
+  uint32_t        _boot_chime_at_ms = 0;// deferred startup chime fire-time (0 = none); played from loop()
 #ifdef HAS_BUZZER
   // Co-resident backends; _buzzer points at the selected one (set in begin()/applyAudioOutput).
   #ifdef HAS_PIEZO

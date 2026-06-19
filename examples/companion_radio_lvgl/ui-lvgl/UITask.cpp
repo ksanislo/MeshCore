@@ -4890,9 +4890,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (_node_prefs) _i2s.setVolume((_node_prefs->buzzer_volume == 0xFF) ? 5 : _node_prefs->buzzer_volume);
 #endif
   applyAudioOutput();   // point _buzzer at the selected backend + apply persisted buzzer_quiet
-  // Startup chime on the selected backend, unless muted or mute-by-default.
+  // Defer the startup chime: play it from loop() ~600 ms in, once the first heavy LVGL
+  // frames are past, so the piezo's note-stepping loop() isn't starved (which stretched
+  // note 1 into a long "doooo"). Skipped when muted or mute-by-default.
   if (_buzzer && _node_prefs && !_node_prefs->buzzer_quiet && !_node_prefs->notify_mute_default) {
-    _buzzer->play("Startup:d=4,o=5,b=160:16c6,16e6,8g6");
+    _boot_chime_at_ms = millis() + 600;
   }
 #endif
 
@@ -13462,6 +13464,11 @@ void UITask::loop() {
 #else
   if (_buzzer) _buzzer->loop();      // non-blocking RTTTL state-stepping; run every pass
 #endif
+  // Deferred startup chime: fire once boot has settled so loop() steps the notes cleanly.
+  if (_boot_chime_at_ms && (int32_t)(now - _boot_chime_at_ms) >= 0) {
+    _boot_chime_at_ms = 0;
+    if (_buzzer) _buzzer->play("Startup:d=4,o=5,b=160:16c6,16e6,8g6");
+  }
 #ifdef HAS_SD_CARD
   // Poll ringtone download status once per second so the button label stays current.
   static uint32_t s_rt_poll_ms = 0;
