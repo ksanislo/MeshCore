@@ -20,6 +20,14 @@ or RadioLib — that's standard MeshCore and we track upstream. Work lives in:
 - `variants/elecrow_crowpanel_advance_35/`, `variants/lilygo_tdeck/` — board/variant code
 
 ## Build & flash
+**Always commit before you build (at least locally).** A dirty tree stamps `FW_GIT_REV` as
+`<sha>-dirty`, so every build looks identical on-device and you cannot tell what is actually
+running — exactly when you most need to (debugging a regression, comparing two flashes). Commit
+first; the commit SHA *is* the build's identity. You can amend/revert/squash before pushing if the
+change turns out wrong — local commits are cheap and disposable. (`gui_version` is shared across
+all LVGL variants and rarely changes, so it never distinguishes builds; the on-device firmware md5
+is the only other reliable fingerprint.)
+
 PlatformIO lives in a repo-local venv. Build both LVGL targets when you touch shared UI:
 ```
 .devtmp/venv/bin/pio run -e elecrow_crowpanel_advance_35_companion_radio_lvgl
