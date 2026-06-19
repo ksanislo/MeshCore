@@ -32,6 +32,9 @@
 // Backlight brightness hook. A variant that supports dimming provides a strong
 // definition (e.g. CrowPanelBoard's LEDC writer); others fall back to this no-op.
 extern "C" __attribute__((weak)) void board_set_backlight(uint8_t duty) { (void)duty; }
+// Enable/disable an external audio amp around I2S playback. Default no-op (e.g. T-Deck's
+// MAX98357A is always live); CrowPanel overrides this to gate PIN_SPK_MUTE.
+extern "C" __attribute__((weak)) void board_audio_amp_enable(bool on) { (void)on; }
 
 // Battery-backed RTC discipline hook. A variant with a real RTC chip provides a strong
 // definition that re-seeds the system clock from the chip (CrowPanel: target.cpp).
@@ -4876,21 +4879,21 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _unmuted_count = mproxy::copyUnmutedKeys(_unmuted_keys, MUTE_MAX);   // and explicit unmutes
 
 #ifdef HAS_BUZZER
-  // Apply persisted volume before begin() so the startup chime plays at the right level.
-  if (_node_prefs) {
-    uint8_t vol = (_node_prefs->buzzer_volume == 0xFF) ? 5 : _node_prefs->buzzer_volume;
-#ifdef BUZZER_IS_I2S
-    _buzzer.setVolume(vol);
+  // Initialise every present backend SILENTLY (begin() does not arm or auto-play), then pick
+  // the selected one and arm it explicitly. This is what fixes the upstream boot bug: nothing
+  // sounds until we say so, on the UI core, after prefs are loaded.
+#ifdef HAS_PIEZO
+  _piezo.begin();
 #endif
+#ifdef HAS_I2S
+  _i2s.begin();
+  if (_node_prefs) _i2s.setVolume((_node_prefs->buzzer_volume == 0xFF) ? 5 : _node_prefs->buzzer_volume);
+#endif
+  applyAudioOutput();   // point _buzzer at the selected backend + apply persisted buzzer_quiet
+  // Startup chime on the selected backend, unless muted or mute-by-default.
+  if (_buzzer && _node_prefs && !_node_prefs->buzzer_quiet && !_node_prefs->notify_mute_default) {
+    _buzzer->play("Startup:d=4,o=5,b=160:16c6,16e6,8g6");
   }
-  // begin() plays the startup chime (forces quiet=false internally).  Cancel it when the user
-  // has muted or chosen mute-by-default — play("") stops any queued melody before it's audible.
-  _buzzer.begin();
-  if (_node_prefs && (_node_prefs->buzzer_quiet || _node_prefs->notify_mute_default)) {
-    _buzzer.quiet(true);
-    _buzzer.play("");
-  }
-  _buzzer.quiet(_node_prefs && _node_prefs->buzzer_quiet);
 #endif
 
   reportCrashIfAny();   // if the last boot panicked, save a decodable report (SD or SPIFFS)
@@ -5060,22 +5063,20 @@ void UITask::sentMsg(const char* peer, const char* text) {
 void UITask::notify(UIEventType t) {
 #ifdef HAS_BUZZER
   if (!notifyEnabled()) return;   // master toggle off -> silent (buzzer_quiet also gates internally)
+  if (!_buzzer) return;
   switch (t) {
     case UIEventType::contactMessage:
     case UIEventType::newContactMessage:
-#ifdef BUZZER_IS_I2S
-      // Use the user-selected (or default) ringtone for direct messages
-      _buzzer.play(resolveRingtone(_node_prefs ? _node_prefs->ringtone_name : nullptr));
-#else
-      _buzzer.play("MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7");
-#endif
+      // The selected ringtone applies on the I2S speaker; the piezo uses its fixed chime.
+      if (audioIsI2S()) _buzzer->play(resolveRingtone(_node_prefs ? _node_prefs->ringtone_name : nullptr));
+      else              _buzzer->play("MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7");
       break;
     case UIEventType::roomMessage:
     case UIEventType::channelMessage:
-      _buzzer.play("kerplop:d=16,o=6,b=120:32g#,32c#");        // short blip
+      _buzzer->play("kerplop:d=16,o=6,b=120:32g#,32c#");       // short blip
       break;
     case UIEventType::ack:
-      _buzzer.play("ack:d=32,o=8,b=120:c");                    // single high tick
+      _buzzer->play("ack:d=32,o=8,b=120:c");                   // single high tick
       break;
     default:
       break;
@@ -9432,6 +9433,15 @@ void UITask::buildSettingsTab(lv_obj_t* parent) {
 #ifdef HAS_BUZZER
   addSettingsSection(body, "Sound");
 
+#ifdef BUZZER_DUAL
+  // Dual-audio boards (e.g. CrowPanel 3.5): pick the piezo buzzer or the I2S speaker.
+  lv_obj_t* fao = makeField(body, "Audio output");
+  _set_audio_output_dd = lv_dropdown_create(fao);
+  lv_obj_set_width(_set_audio_output_dd, LV_PCT(100));
+  lv_dropdown_set_options(_set_audio_output_dd, "Buzzer\nSpeaker");
+  lv_obj_add_event_cb(_set_audio_output_dd, set_audio_output_cb, LV_EVENT_VALUE_CHANGED, NULL);
+#endif
+
   lv_obj_t* fvol = makeField(body, "Volume");
   _set_volume_slider = lv_slider_create(fvol);
   lv_slider_set_range(_set_volume_slider, 0, 10);
@@ -10041,6 +10051,10 @@ void UITask::populateSettings() {
     lv_slider_set_value(_set_volume_slider, vol, LV_ANIM_OFF);
   }
   if (_set_ringtone_dd) syncRingtoneDropdown(_set_ringtone_dd, _node_prefs->ringtone_name);
+#ifdef BUZZER_DUAL
+  if (_set_audio_output_dd) lv_dropdown_set_selected(_set_audio_output_dd, (_node_prefs->audio_output == 1) ? 1 : 0);
+#endif
+  applyAudioOutput();   // (re)point _buzzer + grey the volume/ringtone fields for the selection
 #ifdef HAS_SD_CARD
   refreshRingtoneDownload();
 #endif
@@ -11649,7 +11663,7 @@ void UITask::set_notify_cb(lv_event_t* e) {
 #ifdef HAS_BUZZER
   // Master off silences the chime too (banner/wake are gated in drainEvents); the
   // separate buzzer_quiet still applies when notifications are on.
-  _instance->_buzzer.quiet(!on || _instance->_node_prefs->buzzer_quiet);
+  if (_instance->_buzzer) _instance->_buzzer->quiet(!on || _instance->_node_prefs->buzzer_quiet);
 #endif
 }
 
@@ -11667,7 +11681,7 @@ void UITask::buildRingtoneOptions(lv_obj_t* dd) {
   if (!dd) return;
   char opts[512];
   int pos = 0;
-#ifdef BUZZER_IS_I2S
+#ifdef HAS_I2S
   for (int i = 0; I2SBuzzer::BUILTIN_NAMES[i]; i++) {
     if (pos) opts[pos++] = '\n';
     int n = snprintf(opts + pos, sizeof(opts) - pos, "%s", I2SBuzzer::BUILTIN_NAMES[i]);
@@ -11733,7 +11747,7 @@ void UITask::syncRingtoneDropdown(lv_obj_t* dd, const char* name) {
 
 // Resolve ringtone_name to an RTTTL string (built-in or SD file).
 const char* UITask::resolveRingtone(const char* name) {
-#ifdef BUZZER_IS_I2S
+#ifdef HAS_I2S
   if (!name || !*name) return I2SBuzzer::BUILTIN_RTTTL[0];
 
   // Try built-ins first
@@ -11767,13 +11781,13 @@ void UITask::set_volume_cb(lv_event_t* e) {
   uint8_t vol = (uint8_t)lv_slider_get_value(lv_event_get_target(e));
   _instance->_node_prefs->buzzer_volume = vol;
   pushPrefs();
-#ifdef BUZZER_IS_I2S
-  _instance->_buzzer.setVolume(vol);
-  if (vol == 0) _instance->_buzzer.quiet(true);
-  else {
-    _instance->_buzzer.quiet(_instance->_node_prefs->buzzer_quiet);
-  }
+#ifdef HAS_I2S
+  _instance->_i2s.setVolume(vol);   // volume is an I2S concept; the piezo ignores it
 #endif
+  if (_instance->_buzzer) {
+    if (vol == 0) _instance->_buzzer->quiet(true);
+    else          _instance->_buzzer->quiet(_instance->_node_prefs->buzzer_quiet);
+  }
 }
 
 void UITask::set_ringtone_cb(lv_event_t* e) {
@@ -11789,9 +11803,10 @@ void UITask::set_ringtone_cb(lv_event_t* e) {
 void UITask::ringtone_preview_cb(lv_event_t* e) {
   (void)e;
   if (!_instance || !_instance->_node_prefs) return;
+  if (!_instance->_buzzer) return;
   const char* rtttl = _instance->resolveRingtone(_instance->_node_prefs->ringtone_name);
-  _instance->_buzzer.quiet(false);
-  _instance->_buzzer.play(rtttl);
+  _instance->_buzzer->quiet(false);   // preview is audible even if muted
+  _instance->_buzzer->play(rtttl);
 }
 
 #ifdef HAS_SD_CARD
@@ -11836,6 +11851,47 @@ void UITask::ringtone_dl_cb(lv_event_t* e) {
   _instance->showToast("Downloading ringtones...");
 }
 #endif // HAS_SD_CARD
+
+// Point _buzzer at the selected backend, (re)apply the persisted quiet state, and grey the
+// volume/ringtone widgets when they're not meaningful (i.e. when piezo is selected).
+void UITask::applyAudioOutput() {
+  AudioSink* prev = _buzzer;
+  uint8_t out = _node_prefs ? _node_prefs->audio_output : 0;
+  (void)out;
+#if defined(HAS_PIEZO) && defined(HAS_I2S)
+  _buzzer = (out == 1) ? (AudioSink*)&_i2s : (AudioSink*)&_piezo;   // 1 = I2S speaker, else piezo
+#elif defined(HAS_I2S)
+  _buzzer = &_i2s;
+#elif defined(HAS_PIEZO)
+  _buzzer = &_piezo;
+#endif
+  if (prev && prev != _buzzer) prev->quiet(true);   // silence the backend we just left
+  if (_buzzer) _buzzer->quiet(_node_prefs && _node_prefs->buzzer_quiet);
+
+  // Volume + ringtone only affect the I2S speaker; disable (grey) them otherwise.
+  bool i2s = audioIsI2S();
+  if (_set_volume_slider) { if (i2s) lv_obj_clear_state(_set_volume_slider, LV_STATE_DISABLED); else lv_obj_add_state(_set_volume_slider, LV_STATE_DISABLED); }
+  if (_set_ringtone_dd)   { if (i2s) lv_obj_clear_state(_set_ringtone_dd,   LV_STATE_DISABLED); else lv_obj_add_state(_set_ringtone_dd,   LV_STATE_DISABLED); }
+}
+
+bool UITask::audioIsI2S() const {
+#ifdef HAS_I2S
+  return _buzzer == &_i2s;
+#else
+  return false;
+#endif
+}
+
+#ifdef BUZZER_DUAL
+// Buzzer/Speaker selector: switch backend live (silence the old, arm the new) + persist.
+void UITask::set_audio_output_cb(lv_event_t* e) {
+  if (!_instance || !_instance->_node_prefs) return;
+  uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));   // 0 = Buzzer, 1 = Speaker
+  _instance->_node_prefs->audio_output = (sel == 1) ? 1 : 0;
+  pushPrefs();
+  _instance->applyAudioOutput();
+}
+#endif
 
 #endif // HAS_BUZZER
 
@@ -13401,7 +13457,11 @@ void UITask::loop() {
   }
 
 #ifdef HAS_BUZZER
-  _buzzer.loop();   // non-blocking RTTTL state-stepping; run every pass, even display-off
+#ifdef BUZZER_DUAL
+  _piezo.loop(); _i2s.loop();        // step both backends so a mid-switch chime isn't stranded
+#else
+  if (_buzzer) _buzzer->loop();      // non-blocking RTTTL state-stepping; run every pass
+#endif
 #ifdef HAS_SD_CARD
   // Poll ringtone download status once per second so the button label stays current.
   static uint32_t s_rt_poll_ms = 0;
@@ -13658,7 +13718,7 @@ void UITask::loop() {
 
   // Fire any pending notification chime AFTER the wake + banner draw above, so the
   // slow first flush precedes the first note instead of stretching it. Subsequent
-  // frames are cheap (banner is static), so _buzzer.loop() ends each note on time.
+  // frames are cheap (banner is static), so the audio loop() ends each note on time.
   if (_pending_chime != UIEventType::none) {
     notify(_pending_chime);
     _pending_chime = UIEventType::none;

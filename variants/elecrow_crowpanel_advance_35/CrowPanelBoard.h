@@ -21,11 +21,13 @@
   #define BL_DEFAULT_DUTY 128   // ~50% of 255
 #endif
 
-// Audio path: buzzer on GPIO8, speaker-amp mute on GPIO21. Left floating, the
+// Audio path: piezo buzzer on GPIO8, speaker-amp mute on GPIO21. Left floating, the
 // amp/buzzer pick up EMI from SPI/touch activity and click. The factory
 // firmware drives the buzzer pin and asserts mute (GPIO21 HIGH) at boot.
-#ifndef PIN_BUZZER
-  #define PIN_BUZZER 8
+// NOTE: fork-owned macro PIN_PIEZO (not upstream PIN_BUZZER) -- the audio backend
+// lives entirely in our ui-lvgl PiezoSink; upstream MeshCore sees no buzzer.
+#ifndef PIN_PIEZO
+  #define PIN_PIEZO 8
 #endif
 // Factory speaker idle state: GPIO14 LOW + GPIO21 HIGH (mute). GPIO21 LOW
 // unmutes to play; GPIO14 is the amp's other control line, held low.

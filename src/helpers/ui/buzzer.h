@@ -1,15 +1,5 @@
 #pragma once
 
-// HAS_BUZZER is set when any buzzer backend is available.
-// UITask uses HAS_BUZZER as the single guard; backend is selected below.
-#if defined(PIN_BUZZER)
-  #define HAS_BUZZER 1
-#elif defined(PIN_I2S_BCK)
-  #define HAS_BUZZER 1
-  #define BUZZER_IS_I2S 1
-#endif
-
-#if defined(PIN_BUZZER)
 #include <Arduino.h>
 #include <NonBlockingRtttl.h>
 
@@ -45,4 +35,3 @@ class genericBuzzer
 
         bool _is_quiet = true;
 };
-#endif // PIN_BUZZER

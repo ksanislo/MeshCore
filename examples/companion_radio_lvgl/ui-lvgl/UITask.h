@@ -11,9 +11,12 @@
 #ifdef HAS_SD_CARD
   #include "SdMessageStore.h"
 #endif
-#include <helpers/ui/buzzer.h>        // defines HAS_BUZZER / BUZZER_IS_I2S
-#ifdef BUZZER_IS_I2S
-  #include <helpers/ui/I2SBuzzer.h>
+#include "AudioSink.h"               // audio interface + HAS_PIEZO/HAS_I2S/HAS_BUZZER/BUZZER_DUAL
+#ifdef HAS_PIEZO
+  #include "PiezoSink.h"
+#endif
+#ifdef HAS_I2S
+  #include "I2SBuzzer.h"
 #endif
 #if defined(HAS_BUZZER) && defined(HAS_SD_CARD)
   #include "RingtonePack.h"
@@ -118,11 +121,14 @@ class UITask : public AbstractUITask {
   char            _banner_key[CHAT_PEER_NAME_MAX];  // conv-key the banner opens on tap
   UIEventType     _pending_chime;       // chime deferred to end of loop() (post-draw) so notes don't stretch
 #ifdef HAS_BUZZER
-  #ifdef BUZZER_IS_I2S
-    I2SBuzzer     _buzzer;
-  #else
-    genericBuzzer _buzzer;
+  // Co-resident backends; _buzzer points at the selected one (set in begin()/applyAudioOutput).
+  #ifdef HAS_PIEZO
+    PiezoSink   _piezo;
   #endif
+  #ifdef HAS_I2S
+    I2SBuzzer   _i2s;
+  #endif
+  AudioSink*    _buzzer = nullptr;
 #endif
 
   // Sorted/filtered view of the address book (favourites first, then recency).
@@ -475,6 +481,7 @@ class UITask : public AbstractUITask {
   lv_obj_t*       _set_history_chk;     // persist chat history to SD toggle
   lv_obj_t*       _set_notify_chk;      // master new-message notifications toggle
   lv_obj_t*       _set_mutedef_chk;     // "Mute by default" (opt-in per conversation)
+  lv_obj_t*       _set_audio_output_dd; // Buzzer/Speaker selector (dual-audio boards only)
   lv_obj_t*       _set_volume_slider;    // buzzer volume 0-10
   lv_obj_t*       _set_ringtone_dd;     // ringtone selection dropdown
   lv_obj_t*       _set_ringtone_dl_btn; // "Download ringtones" button
@@ -1159,10 +1166,15 @@ private:
   void        syncRingtoneDropdown(lv_obj_t* dd, const char* name);
   const char* resolveRingtone(const char* name);
   void        refreshRingtoneDownload();
+  void        applyAudioOutput();      // point _buzzer at the selected backend + re-apply quiet
+  bool        audioIsI2S() const;      // true when the selected backend is the I2S speaker
   static void set_volume_cb(lv_event_t* e);
   static void set_ringtone_cb(lv_event_t* e);
   static void ringtone_preview_cb(lv_event_t* e);
   static void ringtone_dl_cb(lv_event_t* e);
+  #ifdef BUZZER_DUAL
+  static void set_audio_output_cb(lv_event_t* e);
+  #endif
 #endif
   // Phase-1 additions: telemetry policy + advanced toggles + share-me.
   static void set_telem_cb(lv_event_t* e);          // user_data 0/1/2 = base/loc/env
@@ -1386,7 +1398,7 @@ public:
       _set_mqtt_en(NULL), _set_mqtt_host(NULL), _set_mqtt_port(NULL), _set_mqtt_user(NULL), _set_mqtt_pw(NULL),
       _set_mqtt_topic(NULL), _set_mqtt_clientid(NULL), _set_mqtt_subscribe(NULL),
       _set_mqtt_tls(NULL), _set_mqtt_rx(NULL), _set_mqtt_tx(NULL), _set_mqtt_status(NULL),
-      _set_avatar_dd(NULL), _set_theme_dd(NULL), _set_mention_chk(NULL), _set_hashtag_chk(NULL), _set_chsender_chk(NULL), _set_history_chk(NULL), _set_notify_chk(NULL), _set_mutedef_chk(NULL), _set_volume_slider(NULL), _set_ringtone_dd(NULL), _set_ringtone_dl_btn(NULL), _set_ringtone_dl_lbl(NULL), _set_ringtone_status(NULL), _set_kb(NULL),
+      _set_avatar_dd(NULL), _set_theme_dd(NULL), _set_mention_chk(NULL), _set_hashtag_chk(NULL), _set_chsender_chk(NULL), _set_history_chk(NULL), _set_notify_chk(NULL), _set_mutedef_chk(NULL), _set_audio_output_dd(NULL), _set_volume_slider(NULL), _set_ringtone_dd(NULL), _set_ringtone_dl_btn(NULL), _set_ringtone_dl_lbl(NULL), _set_ringtone_status(NULL), _set_kb(NULL),
       _set_active_ta(NULL),
       _set_launcher(NULL), _set_pane{}, _set_pane_body{}, _set_active_pane(NULL),
       _set_key_ta(NULL),
@@ -1438,7 +1450,7 @@ public:
 
   bool hasDisplay() const { return _started; }
 #ifdef HAS_BUZZER
-  bool isBuzzerQuiet() { return _buzzer.isQuiet(); }
+  bool isBuzzerQuiet() { return _buzzer ? _buzzer->isQuiet() : true; }
 #else
   bool isBuzzerQuiet() { return true; }
 #endif

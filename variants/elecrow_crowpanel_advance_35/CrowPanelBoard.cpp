@@ -41,8 +41,8 @@ void CrowPanelBoard::begin() {
   // Quiet the audio path so it doesn't click on touch/SPI EMI. Matches the
   // factory firmware's idle state: buzzer low, GPIO14 low, speaker-amp muted
   // (GPIO21 high). None of these should float.
-  pinMode(PIN_BUZZER, OUTPUT);
-  digitalWrite(PIN_BUZZER, LOW);
+  pinMode(PIN_PIEZO, OUTPUT);
+  digitalWrite(PIN_PIEZO, LOW);
   pinMode(PIN_SPK_CTL, OUTPUT);
   digitalWrite(PIN_SPK_CTL, LOW);
   pinMode(PIN_SPK_MUTE, OUTPUT);
@@ -58,6 +58,14 @@ void CrowPanelBoard::begin() {
 // agnostic and only knows this weak symbol). Drives the LEDC duty set up above.
 extern "C" void board_set_backlight(uint8_t duty) {
   ledcWrite(BL_LEDC_CHANNEL, duty);
+}
+
+// I2S amp gate, called by the ui-lvgl I2SBuzzer around playback (weak no-op elsewhere).
+// PIN_SPK_MUTE is active-LOW to play: LOW = unmute/play, HIGH = mute/idle (EMI-safe).
+// PIN_SPK_CTL stays LOW (set in begin()). I2SBuzzer mutes before halting the I2S clock
+// and un-mutes after starting it, so touch/SPI EMI isn't amplified into the speaker.
+extern "C" void board_audio_amp_enable(bool on) {
+  digitalWrite(PIN_SPK_MUTE, on ? LOW : HIGH);
 }
 
 // ---- INA219 battery monitor -------------------------------------------------

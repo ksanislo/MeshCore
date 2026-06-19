@@ -296,6 +296,7 @@ static void applyAppendedPrefsDefaults(NodePrefs& _prefs) {
   _prefs.tcp_companion = 0;                                                               // 205 (off; USB companion)
   _prefs.buzzer_volume = 0xFF;                                                            // 206 (0xFF unset -> 5)
   _prefs.ringtone_name[0] = 0;                                                            // 207 (empty -> Nokia)
+  _prefs.audio_output = 0xFF;                                                             // 208 (0xFF unset -> piezo)
 }
 
 void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) {
@@ -411,6 +412,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     file.read((uint8_t *)&_prefs.tcp_companion, sizeof(_prefs.tcp_companion));                 // 205
     file.read((uint8_t *)&_prefs.buzzer_volume, sizeof(_prefs.buzzer_volume));                 // 206
     file.read((uint8_t *)_prefs.ringtone_name, sizeof(_prefs.ringtone_name));                  // 207
+    file.read((uint8_t *)&_prefs.audio_output, sizeof(_prefs.audio_output));                   // 208
 
     file.close();
   }
@@ -514,6 +516,7 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.tcp_companion, sizeof(_prefs.tcp_companion));                // 205
     file.write((uint8_t *)&_prefs.buzzer_volume, sizeof(_prefs.buzzer_volume));                // 206
     file.write((uint8_t *)_prefs.ringtone_name, sizeof(_prefs.ringtone_name));                 // 207
+    file.write((uint8_t *)&_prefs.audio_output, sizeof(_prefs.audio_output));                  // 208
 
     file.close();
     commitTmp(_fs, "/new_prefs.tmp", "/new_prefs");
