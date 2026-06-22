@@ -1,6 +1,30 @@
 #include "Rtttl.h"
 #include <string.h>
+#include <strings.h>   // strcasecmp
 #include <ctype.h>
+
+// ---------------------------------------------------------------------------
+// Built-in alert catalogue (shared by every backend)
+// ---------------------------------------------------------------------------
+static const char* const ALERT_NAMES[] = {
+    "Nokia", "Tetris", "FurElise", "Reveille", nullptr
+};
+static const char* const ALERT_RTTTL[] = {
+    "Nokia:d=4,o=5,b=225:8e6,8d6,f#5,g#5,8c#6,8b5,d5,e5,8b5,8a5,c#5,e5,2a5",
+    "Tetris:d=4,o=5,b=160:e6,8b5,8c6,d6,8c6,8b5,a5,8a5,8c6,e6,8d6,8c6,b5,8b5,8c6,d6,e6,c6,a5,2a5",
+    "FurElise:d=8,o=5,b=125:e6,d#6,e6,d#6,e6,b5,d6,c6,4a5,p,c5,e5,a5,4b5,p,e5,g#5,b5,4c6",
+    "Reveille:d=4,o=5,b=180:8g,8g,g,8g,8g,g,8g,8e,8c,8e,2g,8g,8g,8g,8e,8e,8g,8e,2c",
+    nullptr
+};
+
+const char* const* rtttlAlertNames() { return ALERT_NAMES; }
+
+const char* rtttlAlertByName(const char* name) {
+    if (!name || !*name) return ALERT_RTTTL[0];          // default: first tune (Nokia)
+    for (int i = 0; ALERT_NAMES[i]; i++)
+        if (strcasecmp(name, ALERT_NAMES[i]) == 0) return ALERT_RTTTL[i];
+    return nullptr;                                       // unknown (caller may try SD)
+}
 
 // Note frequency table (octave 4 reference, semitone 0=C … 11=B).
 static const float NOTE_FREQ_OCT4[12] = {

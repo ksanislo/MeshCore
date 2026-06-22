@@ -27,3 +27,10 @@ private:
 
 // semitone 0=C .. 11=B; octave per RTTTL (5 = scientific C5 ~523 Hz).
 float rtttlNoteFreq(int semitone, int octave);
+
+// Built-in alert tunes (RTTTL). These are just RTTTL strings, so they play on ANY
+// backend (piezo via tone(), I2S via the synth) -- the catalog lives here, shared,
+// rather than inside one backend. rtttlAlertNames() is a null-terminated name list.
+const char* const* rtttlAlertNames();
+// RTTTL for a built-in name (case-insensitive); the first tune for empty, nullptr if unknown.
+const char*        rtttlAlertByName(const char* name);

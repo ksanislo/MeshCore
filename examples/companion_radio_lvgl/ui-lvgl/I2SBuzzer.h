@@ -31,11 +31,7 @@ public:
     bool    isQuiet() override   { return _is_quiet; }
     void    setVolume(uint8_t vol) override;
     uint8_t getVolume() const { return _volume; }
-
-    static const char* const BUILTIN_NAMES[];
-    static const char* const BUILTIN_RTTTL[];
-    static int builtinCount();
-    static const char* builtinByName(const char* name);
+    // (The built-in tune catalog lives in Rtttl.h / rtttlAlertNames() now -- shared with the piezo.)
 
 private:
     i2s_port_t   _port          = I2S_NUM_0;

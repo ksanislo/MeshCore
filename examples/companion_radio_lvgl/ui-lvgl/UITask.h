@@ -12,6 +12,9 @@
   #include "SdMessageStore.h"
 #endif
 #include "AudioSink.h"               // audio interface + HAS_PIEZO/HAS_I2S/HAS_BUZZER/BUZZER_DUAL
+#ifdef HAS_BUZZER
+  #include "Rtttl.h"                  // shared built-in alert catalog (any backend)
+#endif
 #ifdef HAS_PIEZO
   #include "PiezoSink.h"
 #endif
@@ -121,6 +124,7 @@ class UITask : public AbstractUITask {
   char            _banner_key[CHAT_PEER_NAME_MAX];  // conv-key the banner opens on tap
   UIEventType     _pending_chime;       // chime deferred to end of loop() (post-draw) so notes don't stretch
   uint32_t        _boot_chime_at_ms = 0;// deferred startup chime fire-time (0 = none); played from loop()
+  bool            _rt_was_busy = false; // alert-pack download was busy last poll (rebuild list on busy->idle)
 #ifdef HAS_BUZZER
   // Co-resident backends; _buzzer points at the selected one (set in begin()/applyAudioOutput).
   #ifdef HAS_PIEZO

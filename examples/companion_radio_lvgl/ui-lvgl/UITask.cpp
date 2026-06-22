@@ -5069,9 +5069,8 @@ void UITask::notify(UIEventType t) {
   switch (t) {
     case UIEventType::contactMessage:
     case UIEventType::newContactMessage:
-      // The selected ringtone applies on the I2S speaker; the piezo uses its fixed chime.
-      if (audioIsI2S()) _buzzer->play(resolveRingtone(_node_prefs ? _node_prefs->ringtone_name : nullptr));
-      else              _buzzer->play("MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7");
+      // Play the user-selected alert tune on whichever backend is active (piezo or I2S).
+      _buzzer->play(resolveRingtone(_node_prefs ? _node_prefs->ringtone_name : nullptr));
       break;
     case UIEventType::roomMessage:
     case UIEventType::channelMessage:
@@ -9444,13 +9443,17 @@ void UITask::buildSettingsTab(lv_obj_t* parent) {
   lv_obj_add_event_cb(_set_audio_output_dd, set_audio_output_cb, LV_EVENT_VALUE_CHANGED, NULL);
 #endif
 
+#ifdef HAS_I2S
+  // Volume only exists where there's amplitude control (the I2S amp). A passive piezo
+  // is on/off only, so piezo-only builds omit the slider entirely.
   lv_obj_t* fvol = makeField(body, "Volume");
   _set_volume_slider = lv_slider_create(fvol);
   lv_slider_set_range(_set_volume_slider, 0, 10);
   lv_obj_set_width(_set_volume_slider, LV_PCT(100));
   lv_obj_add_event_cb(_set_volume_slider, set_volume_cb, LV_EVENT_VALUE_CHANGED, NULL);
+#endif
 
-  lv_obj_t* frt = makeField(body, "Ringtone");
+  lv_obj_t* frt = makeField(body, "Alert");
   _set_ringtone_dd = lv_dropdown_create(frt);
   lv_obj_set_width(_set_ringtone_dd, LV_PCT(100));
   lv_obj_add_event_cb(_set_ringtone_dd, set_ringtone_cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -9469,7 +9472,7 @@ void UITask::buildSettingsTab(lv_obj_t* parent) {
   lv_obj_set_style_bg_color(_set_ringtone_dl_btn, lv_color_hex(UI_ACCENT), 0);
   lv_obj_add_event_cb(_set_ringtone_dl_btn, ringtone_dl_cb, LV_EVENT_CLICKED, NULL);
   _set_ringtone_dl_lbl = lv_label_create(_set_ringtone_dl_btn);
-  lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_DOWNLOAD " Download ringtones");
+  lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_DOWNLOAD " Download alerts");
   lv_obj_center(_set_ringtone_dl_lbl);
   _set_ringtone_status = lv_label_create(body);
   lv_obj_set_width(_set_ringtone_status, LV_PCT(100));
@@ -10052,7 +10055,7 @@ void UITask::populateSettings() {
     uint8_t vol = (_node_prefs->buzzer_volume == 0xFF) ? 5 : _node_prefs->buzzer_volume;
     lv_slider_set_value(_set_volume_slider, vol, LV_ANIM_OFF);
   }
-  if (_set_ringtone_dd) syncRingtoneDropdown(_set_ringtone_dd, _node_prefs->ringtone_name);
+  if (_set_ringtone_dd) { buildRingtoneOptions(_set_ringtone_dd); syncRingtoneDropdown(_set_ringtone_dd, _node_prefs->ringtone_name); }
 #ifdef BUZZER_DUAL
   if (_set_audio_output_dd) lv_dropdown_set_selected(_set_audio_output_dd, (_node_prefs->audio_output == 1) ? 1 : 0);
 #endif
@@ -11678,22 +11681,17 @@ void UITask::set_mutedef_cb(lv_event_t* e) {
 }
 
 #ifdef HAS_BUZZER
-// Build the ringtone dropdown options string (built-ins + any .rtttl files on SD).
+// Build the alert dropdown options string (shared built-ins + any .rtttl files on SD).
 void UITask::buildRingtoneOptions(lv_obj_t* dd) {
   if (!dd) return;
   char opts[512];
   int pos = 0;
-#ifdef HAS_I2S
-  for (int i = 0; I2SBuzzer::BUILTIN_NAMES[i]; i++) {
+  // Built-in alert tunes from the shared catalog -- playable on piezo or I2S alike.
+  for (const char* const* nm = rtttlAlertNames(); *nm; ++nm) {
     if (pos) opts[pos++] = '\n';
-    int n = snprintf(opts + pos, sizeof(opts) - pos, "%s", I2SBuzzer::BUILTIN_NAMES[i]);
+    int n = snprintf(opts + pos, sizeof(opts) - pos, "%s", *nm);
     if (n > 0) pos += n;
   }
-#else
-  // genericBuzzer has no named built-ins; offer just the single default
-  snprintf(opts, sizeof(opts), "Default");
-  pos = strlen(opts);
-#endif
 #ifdef HAS_SD_CARD
   // Append any .rtttl files found on the SD card under /ringtones/
   if (SdSvc::ready()) {
@@ -11747,17 +11745,14 @@ void UITask::syncRingtoneDropdown(lv_obj_t* dd, const char* name) {
   lv_dropdown_set_selected(dd, 0);   // not found -> first entry
 }
 
-// Resolve ringtone_name to an RTTTL string (built-in or SD file).
+// Resolve an alert name to an RTTTL string (shared built-in or SD file). Backend-agnostic:
+// the returned string plays on whichever backend is active (piezo or I2S).
 const char* UITask::resolveRingtone(const char* name) {
-#ifdef HAS_I2S
-  if (!name || !*name) return I2SBuzzer::BUILTIN_RTTTL[0];
-
-  // Try built-ins first
-  const char* r = I2SBuzzer::builtinByName(name);
+  // Built-in alert tunes first (shared catalog).
+  const char* r = rtttlAlertByName(name);
   if (r) return r;
-
 #ifdef HAS_SD_CARD
-  // Try loading from SD /ringtones/<name>.rtttl into the static buffer
+  // Then an SD file: /ringtones/<name>.rtttl loaded into a static buffer.
   static char sd_rtttl_buf[512];
   char path[48];
   snprintf(path, sizeof(path), "/ringtones/%s.rtttl", name);
@@ -11771,11 +11766,7 @@ const char* UITask::resolveRingtone(const char* name) {
     }
   }
 #endif
-  return I2SBuzzer::BUILTIN_RTTTL[0];   // fallback
-#else
-  (void)name;
-  return "MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7";
-#endif
+  return rtttlAlertByName("");   // fallback: first built-in tune
 }
 
 void UITask::set_volume_cb(lv_event_t* e) {
@@ -11828,20 +11819,22 @@ void UITask::refreshRingtoneDownload() {
     if (hasIp && sdOk) lv_obj_clear_state(_set_ringtone_dl_btn, LV_STATE_DISABLED);
     else               lv_obj_add_state(_set_ringtone_dl_btn, LV_STATE_DISABLED);
     lv_obj_set_style_bg_color(_set_ringtone_dl_btn, lv_color_hex(UI_ACCENT), 0);
-    if (_set_ringtone_dl_lbl) lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_DOWNLOAD " Download ringtones");
+    if (_set_ringtone_dl_lbl) lv_label_set_text(_set_ringtone_dl_lbl, LV_SYMBOL_DOWNLOAD " Download alerts");
   }
   if (_set_ringtone_status) {
     char sb[64];
-    if (!sdOk)             strcpy(sb, "insert + mount SD first");
-    else if (!hasIp && !busy) strcpy(sb, "enable WiFi first");
-    else                   RingtonePack::status(sb, sizeof(sb));
+    if (!sdOk)                strcpy(sb, "insert + mount SD first");
+    else if (!hasIp && !busy) strcpy(sb, "put device in WiFi mode first");
+    else                      RingtonePack::status(sb, sizeof(sb));
     lv_label_set_text(_set_ringtone_status, sb);
   }
-  // Rebuild the dropdown after a successful download so new files appear immediately
-  if (!busy && _set_ringtone_dd) {
+  // Rebuild the dropdown only on the busy->idle edge (a download just finished) so new SD
+  // files appear -- NOT every poll, since loop() calls this once a second.
+  if (_rt_was_busy && !busy && _set_ringtone_dd) {
     buildRingtoneOptions(_set_ringtone_dd);
     if (_node_prefs) syncRingtoneDropdown(_set_ringtone_dd, _node_prefs->ringtone_name);
   }
+  _rt_was_busy = busy;
 }
 
 void UITask::ringtone_dl_cb(lv_event_t* e) {
@@ -11850,7 +11843,7 @@ void UITask::ringtone_dl_cb(lv_event_t* e) {
   if (RingtonePack::busy()) { RingtonePack::cancel(); _instance->showToast("Cancelling..."); return; }
   if (!SdSvc::ready())      { _instance->showToast("Mount the SD card first"); return; }
   RingtonePack::start();
-  _instance->showToast("Downloading ringtones...");
+  _instance->showToast("Downloading alerts...");
 }
 #endif // HAS_SD_CARD
 
@@ -11870,10 +11863,11 @@ void UITask::applyAudioOutput() {
   if (prev && prev != _buzzer) prev->quiet(true);   // silence the backend we just left
   if (_buzzer) _buzzer->quiet(_node_prefs && _node_prefs->buzzer_quiet);
 
-  // Volume + ringtone only affect the I2S speaker; disable (grey) them otherwise.
+  // Volume only affects the I2S speaker (the piezo has no amplitude control) -- it only
+  // exists on HAS_I2S builds, and in dual mode is greyed when the piezo is selected. The
+  // alert picker works on every backend, so it is never greyed here.
   bool i2s = audioIsI2S();
   if (_set_volume_slider) { if (i2s) lv_obj_clear_state(_set_volume_slider, LV_STATE_DISABLED); else lv_obj_add_state(_set_volume_slider, LV_STATE_DISABLED); }
-  if (_set_ringtone_dd)   { if (i2s) lv_obj_clear_state(_set_ringtone_dd,   LV_STATE_DISABLED); else lv_obj_add_state(_set_ringtone_dd,   LV_STATE_DISABLED); }
 }
 
 bool UITask::audioIsI2S() const {
@@ -13470,9 +13464,10 @@ void UITask::loop() {
     if (_buzzer) _buzzer->play("Startup:d=4,o=5,b=160:16c6,16e6,8g6");
   }
 #ifdef HAS_SD_CARD
-  // Poll ringtone download status once per second so the button label stays current.
+  // Poll the alert-download button once a second so it tracks WiFi/SD state LIVE (not only
+  // when the Sound pane is opened). Cheap: SD I/O happens only on the download-complete edge.
   static uint32_t s_rt_poll_ms = 0;
-  if (RingtonePack::busy() && (uint32_t)(now - s_rt_poll_ms) >= 1000) {
+  if ((uint32_t)(now - s_rt_poll_ms) >= 1000) {
     s_rt_poll_ms = now;
     refreshRingtoneDownload();
   }
