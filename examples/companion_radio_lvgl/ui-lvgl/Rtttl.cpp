@@ -7,9 +7,12 @@
 // Built-in alert catalogue (shared by every backend)
 // ---------------------------------------------------------------------------
 static const char* const ALERT_NAMES[] = {
-    "Nokia", "Tetris", "FurElise", "Reveille", nullptr
+    "Default", "Nokia", "Tetris", "FurElise", "Reveille", nullptr
 };
 static const char* const ALERT_RTTTL[] = {
+    // Index 0 = the original MeshCore 3-note rising message chime. It's the unset default
+    // (rtttlAlertByName("") returns this) AND a selectable entry in the picker.
+    "Default:d=4,o=6,b=200:32e,32g,32b,16c7",
     "Nokia:d=4,o=5,b=225:8e6,8d6,f#5,g#5,8c#6,8b5,d5,e5,8b5,8a5,c#5,e5,2a5",
     "Tetris:d=4,o=5,b=160:e6,8b5,8c6,d6,8c6,8b5,a5,8a5,8c6,e6,8d6,8c6,b5,8b5,8c6,d6,e6,c6,a5,2a5",
     "FurElise:d=8,o=5,b=125:e6,d#6,e6,d#6,e6,b5,d6,c6,4a5,p,c5,e5,a5,4b5,p,e5,g#5,b5,4c6",

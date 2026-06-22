@@ -295,7 +295,7 @@ static void applyAppendedPrefsDefaults(NodePrefs& _prefs) {
   _prefs.trackball_sel_invert = 0;                                                        // 204 (normal selection dir)
   _prefs.tcp_companion = 0;                                                               // 205 (off; USB companion)
   _prefs.buzzer_volume = 0xFF;                                                            // 206 (0xFF unset -> 5)
-  _prefs.ringtone_name[0] = 0;                                                            // 207 (empty -> Nokia)
+  _prefs.ringtone_name[0] = 0;                                                            // 207 (empty -> "Default" alert)
   _prefs.audio_output = 0xFF;                                                             // 208 (0xFF unset -> piezo)
 }
 

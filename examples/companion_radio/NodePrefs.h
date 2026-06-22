@@ -122,8 +122,8 @@ struct NodePrefs {  // persisted to file
                                 // 5000, LAN) instead of USB serial. Default 0 (off). Reboot to apply.
   // Sound (tail-appended; 0 = unset -> defaults applied in applyAppendedPrefsDefaults).
   uint8_t  buzzer_volume;       // 0 = muted, 1-10 = volume level; 0xFF unset -> 5
-  char     ringtone_name[24];   // built-in name (e.g. "Nokia") or SD basename "MyTune"
-                                // (resolves to /ringtones/MyTune.rtttl); "" = default (Nokia)
+  char     ringtone_name[24];   // built-in alert name (e.g. "Default", "Nokia") or SD basename
+                                // "MyTune" (-> /ringtones/MyTune.rtttl); "" = first built-in ("Default")
   uint8_t  audio_output;        // 0 = piezo buzzer (default), 1 = I2S speaker; 0xFF unset -> piezo.
                                 // Only meaningful on dual-audio boards (e.g. CrowPanel 3.5).
 };
