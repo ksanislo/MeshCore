@@ -11719,7 +11719,7 @@ void UITask::buildRingtoneOptions(lv_obj_t* dd) {
     }
   }
 #endif
-  if (!pos) snprintf(opts, sizeof(opts), "Nokia");   // fallback
+  if (!pos) snprintf(opts, sizeof(opts), "Default");   // fallback (catalog is never empty)
   lv_dropdown_set_options(dd, opts);
 }
 

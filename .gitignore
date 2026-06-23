@@ -20,3 +20,7 @@ platformio.local.ini
 
 # local dev scratch (persistent across reboots; not committed)
 .devtmp/
+
+# Local-only alert pack: copyrighted tunes kept out of the repo (not distributed).
+# Built-in alerts (public domain) live in ui-lvgl/Rtttl.cpp instead.
+ringtones/pack.txt

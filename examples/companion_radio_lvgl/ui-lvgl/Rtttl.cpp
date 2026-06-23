@@ -6,16 +6,28 @@
 // ---------------------------------------------------------------------------
 // Built-in alert catalogue (shared by every backend)
 // ---------------------------------------------------------------------------
+// Public-domain tunes only (melodies out of copyright). The two trademark-named ones are
+// renamed to their PD source works -- "GranVals" (Tárrega, the melody behind the Nokia tune)
+// and "Korobeiniki" (the Russian folk song behind the Tetris theme). Copyrighted tunes live
+// only in the local, gitignored ringtones/pack.txt -- never compiled in or distributed.
 static const char* const ALERT_NAMES[] = {
-    "Default", "Nokia", "Tetris", "FurElise", "Reveille", nullptr
+    "Default", "GranVals", "Korobeiniki", "FurElise", "OdeToJoy", "Entertainer",
+    "MtnKing", "Turkish", "CanonD", "JingleBells", "HappyBday", "Reveille", nullptr
 };
 static const char* const ALERT_RTTTL[] = {
     // Index 0 = the original MeshCore 3-note rising message chime. It's the unset default
     // (rtttlAlertByName("") returns this) AND a selectable entry in the picker.
     "Default:d=4,o=6,b=200:32e,32g,32b,16c7",
-    "Nokia:d=4,o=5,b=225:8e6,8d6,f#5,g#5,8c#6,8b5,d5,e5,8b5,8a5,c#5,e5,2a5",
-    "Tetris:d=4,o=5,b=160:e6,8b5,8c6,d6,8c6,8b5,a5,8a5,8c6,e6,8d6,8c6,b5,8b5,8c6,d6,e6,c6,a5,2a5",
+    "GranVals:d=4,o=5,b=225:8e6,8d6,f#5,g#5,8c#6,8b5,d5,e5,8b5,8a5,c#5,e5,2a5",
+    "Korobeiniki:d=4,o=5,b=160:e6,8b5,8c6,d6,8c6,8b5,a5,8a5,8c6,e6,8d6,8c6,b5,8b5,8c6,d6,e6,c6,a5,2a5",
     "FurElise:d=8,o=5,b=125:e6,d#6,e6,d#6,e6,b5,d6,c6,4a5,p,c5,e5,a5,4b5,p,e5,g#5,b5,4c6",
+    "OdeToJoy:d=4,o=5,b=120:e,e,f,g,g,f,e,d,c,c,d,e,2e.,d,e,e,f,g,g,f,e,d,c,c,d,e,2d.,c",
+    "Entertainer:d=4,o=5,b=140:8d,8d#,8e,c6,8e,c6,8e,2c6,8c6,8d6,8d#6,8e6,8c6,8d6,e6,8b,d6,2c6,8p,8d,8d#,8e,c6,8e,c6,8e,2c6,8c6,8d6,8d#6,8e6,8c6,8d6,e6,8b,d6,2c6",
+    "MtnKing:d=4,o=5,b=160:8a4,8b4,8c,8d,8e,8c,8e,a4,8a4,8b4,8c,8d,8e,8c,8e,8c6,8b4,8c,8d,8b4,8g,8b4,2g",
+    "Turkish:d=8,o=5,b=160:a4,a4,a4,a4,g,g,a4,a4,a4,a4,g,g,a4,c,b4,a4,b4,c,d,c,b4,a4,c,e,d,c,b4,a4",
+    "CanonD:d=4,o=5,b=100:d,f#,a,f#,g,b,d6,b,a,f#,a,e,f#,d,f#,a",
+    "JingleBells:d=4,o=5,b=200:e,e,2e,e,e,2e,e,g,c,d,1e,f,f,f.,f,f,e,e,e,e,d,d,e,2d,g",
+    "HappyBday:d=4,o=5,b=120:8g,8g,a,g,c6,2b,8g,8g,a,g,d6,2c6,8g,8g,g6,e6,c6,b,a,8f6,8f6,e6,c6,d6,2c6",
     "Reveille:d=4,o=5,b=180:8g,8g,g,8g,8g,g,8g,8e,8c,8e,2g,8g,8g,8g,8e,8e,8g,8e,2c",
     nullptr
 };
