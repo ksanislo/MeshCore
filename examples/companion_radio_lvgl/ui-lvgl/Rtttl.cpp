@@ -12,7 +12,7 @@
 // only in the local, gitignored ringtones/pack.txt -- never compiled in or distributed.
 static const char* const ALERT_NAMES[] = {
     "Default", "GranVals", "Korobeiniki", "FurElise", "OdeToJoy", "Entertainer",
-    "MtnKing", "Turkish", "CanonD", "JingleBells", "HappyBday", "Reveille", nullptr
+    "MtnKing", "Turkish", "CanonD", "JingleBells", "Reveille", nullptr
 };
 static const char* const ALERT_RTTTL[] = {
     // Index 0 = the original MeshCore 3-note rising message chime. It's the unset default
@@ -27,7 +27,6 @@ static const char* const ALERT_RTTTL[] = {
     "Turkish:d=8,o=5,b=160:a4,a4,a4,a4,g,g,a4,a4,a4,a4,g,g,a4,c,b4,a4,b4,c,d,c,b4,a4,c,e,d,c,b4,a4",
     "CanonD:d=4,o=5,b=100:d,f#,a,f#,g,b,d6,b,a,f#,a,e,f#,d,f#,a",
     "JingleBells:d=4,o=5,b=200:e,e,2e,e,e,2e,e,g,c,d,1e,f,f,f.,f,f,e,e,e,e,d,d,e,2d,g",
-    "HappyBday:d=4,o=5,b=120:8g,8g,a,g,c6,2b,8g,8g,a,g,d6,2c6,8g,8g,g6,e6,c6,b,a,8f6,8f6,e6,c6,d6,2c6",
     "Reveille:d=4,o=5,b=180:8g,8g,g,8g,8g,g,8g,8e,8c,8e,2g,8g,8g,8g,8e,8e,8g,8e,2c",
     nullptr
 };
