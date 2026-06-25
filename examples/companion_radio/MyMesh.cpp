@@ -424,7 +424,7 @@ void MyMesh::wifiLoop() {
   if (up && _releases_next_check_ms != 0 && millis() >= _releases_next_check_ms
       && !_releases_fetching && !_ota_busy) {
     _releases_next_check_ms = millis() + 3600000UL;   // re-check hourly
-    updateReleaseList();
+    startReleaseListTask();   // own task -- a blocking TLS GET here would task-WDT the mesh (core 0)
   }
 
   // Adopt NTP time when it resolves (and re-check periodically so a long uptime
@@ -709,6 +709,26 @@ void MyMesh::otaTaskTramp(void* arg) {
   self->otaFromUrl();        // blocks here; on success it reboots and never returns
   self->_ota_busy = false;   // only reached on failure -- free the slot for a retry
   vTaskDelete(nullptr);      // self-destruct (stack reclaimed)
+}
+
+// FreeRTOS entry: the manifest fetch on its own task. updateReleaseList sets/clears _releases_fetching.
+void MyMesh::relTaskTramp(void* arg) {
+  static_cast<MyMesh*>(arg)->updateReleaseList();
+  vTaskDelete(nullptr);
+}
+
+// Spawn the OTA version check on its OWN task, NEVER the mesh task: updateReleaseList() does a blocking
+// TLS GET with multi-second timeouts that would starve core 0 past the 5s task-WDT (reset_reason=6,
+// task=mesh -- the recurring "crash while checking for updates"). One at a time; skipped during a
+// download. Mirrors startOtaTask.
+void MyMesh::startReleaseListTask() {
+  if (_releases_fetching || _ota_busy) return;
+  _releases_fetching = true;   // claim now so a second trigger can't double-spawn (the UI watches this too)
+  if (xTaskCreatePinnedToCore(relTaskTramp, "rel", 16384, this, 1, nullptr, 1) != pdPASS) {
+    _releases_fetching = false;
+    strncpy(_ota_release_status, "task spawn failed", sizeof(_ota_release_status) - 1);
+    _ota_release_status[sizeof(_ota_release_status) - 1] = 0;
+  }
 }
 
 // Spawn the OTA download on its own task pinned to core 1, off the mesh's core 0 -- a slow

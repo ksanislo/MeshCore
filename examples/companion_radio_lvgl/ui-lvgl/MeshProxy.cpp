@@ -350,7 +350,7 @@ static void execCommand(MyMesh& mesh, const MeshCmd& cmd) {
       break;
     case CmdKind::UpdateReleases:
 #if defined(WITH_WIFI) && defined(ESP32)
-      mesh.updateReleaseList();    // HTTPS fetch of the GitHub releases list -> backend cache
+      mesh.startReleaseListTask();  // own task -- a blocking TLS GET on the mesh task task-WDTs core 0
 #endif
       break;
     case CmdKind::OtaUpdate:

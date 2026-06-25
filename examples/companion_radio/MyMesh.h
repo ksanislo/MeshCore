@@ -130,7 +130,8 @@ public:
   #define OTA_RELEASES_PER_PAGE 10
 #endif
   struct OtaRelease { char tag[24]; bool prerelease; char url[192]; };  // url: constructed github.com asset URL (long board prefixes push past 160)
-  void updateReleaseList();                // fetch firmware-manifest.json -> _ota_releases (backend core)
+  void updateReleaseList();                // fetch firmware-manifest.json -> _ota_releases (OWN task, never the mesh task)
+  void startReleaseListTask();             // spawn updateReleaseList() on its own task (blocking TLS GET must not stall core 0)
   int  numReleases() const { return _ota_release_count; }
   bool getRelease(int idx, OtaRelease& out) const;
   void getReleaseStatus(char* out, size_t cap);
@@ -186,6 +187,7 @@ protected:
   void* volatile _ota_client = nullptr;  // active download WiFiClient (void* to keep WiFi out of the
                                          // header); cancelOta() stop()s it to abort a blocked connect/read
   static void otaTaskTramp(void* arg); // FreeRTOS entry -> otaFromUrl() on its own task
+  static void relTaskTramp(void* arg); // FreeRTOS entry -> updateReleaseList() on its own task
   void startWifi();
   void stopWifi();
 #endif
