@@ -9,6 +9,7 @@
 #include <esp_heap_caps.h>
 #include <esp_system.h>                 // esp_restart() for the Reboot button
 #include <esp_core_dump.h>              // boot-time crash report (coredump-to-flash is on)
+#include <esp_partition.h>             // read the raw coredump partition out to SD for full offline decode
 #include <sys/time.h>                   // settimeofday for the manual set-time field fallback
 #include "SdCard.h"                     // SdSvc + the shared `sd` handle, to save crash reports
 #include "MapView.h"                    // offline-tile Map tab
@@ -4722,9 +4723,41 @@ void UITask::reportCrashIfAny() {
     if (f) { f.write((const uint8_t*)rpt, n); f.close(); wrote = true; strcpy(where, "spiffs:/last_crash.txt"); }
   }
 
+  // Also save the RAW coredump to SD before erasing it. The summary above only carries the panicking
+  // task's (corrupt) backtrace; for a TASK_WDT the real culprit is what the OTHER core was doing,
+  // which only the full dump shows. Decode offline:
+  //   .devtmp/venv/bin/python -m esp_coredump info_corefile -c /crash/coredump-<ts>.bin -t raw <firmware.elf>
+  bool cd_saved = false;
+  {
+    uint32_t cd_addr = 0, cd_size = 0;
+    const esp_partition_t* cdp = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, NULL);
+    if (cdp && esp_core_dump_image_get(&cd_addr, &cd_size) == ESP_OK &&
+        cd_size > 0 && cd_size <= cdp->size && SdSvc::ensureMounted()) {
+      SdSvc::Lock lk;
+      if (!sd.exists("/crash")) sd.mkdir("/crash");
+      char cdpath[48];
+      snprintf(cdpath, sizeof(cdpath), "/crash/coredump-%u.bin", (unsigned)mproxy::rtcSeconds());
+      FsFile cf = sd.open(cdpath, O_WRONLY | O_CREAT | O_TRUNC);
+      if (cf) {
+        uint32_t base = cd_addr - cdp->address;   // offset within the coredump partition
+        uint8_t buf[1024];
+        cd_saved = true;
+        for (uint32_t p = 0; p < cd_size; ) {
+          uint32_t chunk = (cd_size - p) < sizeof(buf) ? (cd_size - p) : sizeof(buf);
+          if (esp_partition_read(cdp, base + p, buf, chunk) != ESP_OK) { cd_saved = false; break; }
+          cf.write(buf, chunk);
+          p += chunk;
+        }
+        cf.close();
+      }
+    }
+  }
+
   esp_core_dump_image_erase();   // consume it so we don't re-report the same crash
 
-  if (wrote) snprintf(_crash_note, sizeof(_crash_note), LV_SYMBOL_WARNING " Crash report: %s", where);
+  if (wrote) snprintf(_crash_note, sizeof(_crash_note), LV_SYMBOL_WARNING " Crash report: %s%s",
+                      where, cd_saved ? " (+coredump.bin)" : "");
 }
 
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
