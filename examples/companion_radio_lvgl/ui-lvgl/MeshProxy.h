@@ -202,7 +202,8 @@ bool releasesFetching();                     // true while the backend HTTPS rel
 void uiLowMemReady(bool ready);              // UI -> backend ack: draw buf shrunk (TLS RAM free) / restored
 int  copyMutedKeys(char out[][CHAT_PEER_NAME_MAX], int max);    // seed the UI's explicit-muted set at begin()
 int  copyUnmutedKeys(char out[][CHAT_PEER_NAME_MAX], int max);  // seed the UI's explicit-unmuted set at begin()
-uint32_t rtcSeconds();             // live device clock (ESP32 internal RTC; safe cross-core)
+uint32_t rtcSeconds();             // live device clock (ESP32 internal RTC; UTC; safe cross-core)
+int      tzOffsetMinutes();        // device UTC offset (NodePrefs.tz_offset_minutes); safe cross-core
 
 // Signal-strength meter: a peak-hold-with-decay envelope over heard-packet SNR. The
 // backend feeds samples from onRecvPacket (noteRxSnr); the UI reads the current decayed

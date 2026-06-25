@@ -612,6 +612,7 @@ bool getNameOverride(const uint8_t* pubkey, char* out, size_t cap) {
 const NodePrefs* prefsSnap() { const MeshSnapshot* s = readBuf(); return s ? &s->prefs : nullptr; }
 uint32_t activeBlePin()      { const MeshSnapshot* s = readBuf(); return s ? s->active_ble_pin : 0; }
 uint32_t rtcSeconds()        { return the_mesh.getRTCClock()->getCurrentTime(); }
+int      tzOffsetMinutes()   { const NodePrefs* p = the_mesh.getNodePrefs(); return p ? p->tz_offset_minutes : 0; }
 
 // ---- Signal-strength meter (SNR peak-hold-with-decay) ----------------------
 // Two scalars: the held peak (dB) and when it was last raised. Written on the backend

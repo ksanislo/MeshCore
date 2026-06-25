@@ -37,11 +37,12 @@ bool ready() { return s_mounted; }
 // inserted, or to force a re-check.
 void rescan() { s_gave_up = false; s_fail_count = 0; s_retry_ms = 0; }
 
-// Stamp SD files with the real wall-clock so crash reports / logs / history are sortable by date,
-// instead of the 1980 FAT epoch. Uses the maintained device clock (mproxy::rtcSeconds) -- in-memory,
-// no I2C, cross-core safe, so it's fine to call inside an SD write. UTC (FAT has no timezone field).
+// Stamp SD files with the device's LOCAL wall-clock so crash reports / logs / history are sortable by
+// date, instead of the 1980 FAT epoch. FAT stores LOCAL time (no timezone field), so we shift the UTC
+// device clock by the configured UTC offset (NodePrefs.tz_offset_minutes) -- both in-memory, no I2C,
+// cross-core safe, so it's fine to call inside an SD write. Falls back to the FAT floor if unseeded.
 static void sdDateTimeCB(uint16_t* date, uint16_t* time) {
-  time_t t = (time_t)mproxy::rtcSeconds();
+  time_t t = (time_t)((long)mproxy::rtcSeconds() + (long)mproxy::tzOffsetMinutes() * 60);
   struct tm tmv;
   gmtime_r(&t, &tmv);
   int year = tmv.tm_year + 1900;
