@@ -159,7 +159,10 @@ Single version for all LVGL variants: `[meshcore_lvgl] gui_version` in the elecr
 `platformio.ini` (each variant references `${meshcore_lvgl.gui_version}`). Per release: bump it,
 build both LVGL envs (+ a non-LVGL sanity build), commit on `dev`, build clean (so `FW_GIT_REV`
 isn't `-dirty`), stage versioned assets `<OTA_ASSET_PREFIX>-<ver>-<sha7>.{bin,bin.md5,-merged.bin}`
-for each variant, push `dev`, then `gh release create <ver> --target dev` (`--prerelease` for rc,
-`--latest` for final). Keep release notes SHORT (they count toward the 128 KB release-list JSON the
-OTA picker parses). Emoji packs are a separate `emoji-emj1` release. Never push without explicit
-user approval.
+for each variant, **update `firmware-manifest.json`** (prepend `{"ver","sha":"<sha7>","pre":<bool>}`,
+keep ~3 finals — the OTA picker fetches it from `raw.githubusercontent.../dev/firmware-manifest.json`,
+and devices won't see the release without this), push `dev`, then `gh release create <ver> --target
+dev` (`--prerelease` for rc, `--latest` for final). The manifest `sha` MUST equal the `<sha7>` in the
+asset names (the device builds the download URL as `<prefix>-<ver>-<sha>.bin`). Keep release notes
+SHORT (they count toward the 128 KB release-list JSON). Emoji packs are a separate `emoji-emj1`
+release. Never push without explicit user approval.
