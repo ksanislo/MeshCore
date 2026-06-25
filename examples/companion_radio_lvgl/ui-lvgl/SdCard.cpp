@@ -3,7 +3,9 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include "lvgl.h"
+#include "MeshProxy.h"   // mproxy::rtcSeconds() -- the maintained on-device clock
 
 // Low-level bus + mount primitives provided by the variant (target.cpp): they
 // know the SD pins and the LoRa SPI to share. sd_card_begin() brackets its own
@@ -35,7 +37,22 @@ bool ready() { return s_mounted; }
 // inserted, or to force a re-check.
 void rescan() { s_gave_up = false; s_fail_count = 0; s_retry_ms = 0; }
 
+// Stamp SD files with the real wall-clock so crash reports / logs / history are sortable by date,
+// instead of the 1980 FAT epoch. Uses the maintained device clock (mproxy::rtcSeconds) -- in-memory,
+// no I2C, cross-core safe, so it's fine to call inside an SD write. UTC (FAT has no timezone field).
+static void sdDateTimeCB(uint16_t* date, uint16_t* time) {
+  time_t t = (time_t)mproxy::rtcSeconds();
+  struct tm tmv;
+  gmtime_r(&t, &tmv);
+  int year = tmv.tm_year + 1900;
+  if (year < 1980) { *date = FS_DATE(1980, 1, 1); *time = FS_TIME(0, 0, 0); return; }  // clock unset -> FAT floor
+  *date = FS_DATE(year, tmv.tm_mon + 1, tmv.tm_mday);
+  *time = FS_TIME(tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+}
+
 bool ensureMounted() {
+  static bool s_dt_cb = false;   // register the file-timestamp callback once (global, mount-independent)
+  if (!s_dt_cb) { s_dt_cb = true; FsDateTime::setCallback(sdDateTimeCB); }
   if (s_mounted) return true;
   if (s_gave_up) return false;     // missing/dead card: don't stall the bus every few s
   uint32_t now = millis();
