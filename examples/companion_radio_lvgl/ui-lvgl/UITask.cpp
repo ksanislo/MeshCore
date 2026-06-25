@@ -4700,10 +4700,10 @@ void UITask::reportCrashIfAny() {
     n += snprintf(rpt + n, sizeof(rpt) - n, "backtrace%s:", s->exc_bt_info.corrupted ? " (corrupt)" : "");
     for (uint32_t i = 0; i < s->exc_bt_info.depth && i < 16; i++)
       n += snprintf(rpt + n, sizeof(rpt) - n, " 0x%08x", (unsigned)s->exc_bt_info.bt[i]);
-    n += snprintf(rpt + n, sizeof(rpt) - n, "\napp_sha256=");
-    for (size_t i = 0; i < sizeof(s->app_elf_sha256) && n < (int)sizeof(rpt) - 3; i++)
-      n += snprintf(rpt + n, sizeof(rpt) - n, "%02x", s->app_elf_sha256[i]);
-    n += snprintf(rpt + n, sizeof(rpt) - n, "\n");
+    // app_elf_sha256 is ALREADY an ASCII hex string (= sha256(firmware.elf)[:N]); print it directly,
+    // not %02x (which double-encodes). This value matches .devtmp/ota/archive/<app_sha256>.elf.
+    n += snprintf(rpt + n, sizeof(rpt) - n, "\napp_sha256=%.*s\n",
+                  (int)sizeof(s->app_elf_sha256), (const char*)s->app_elf_sha256);
   } else {
     n += snprintf(rpt + n, sizeof(rpt) - n, "(coredump present, summary unavailable)\n");
   }
