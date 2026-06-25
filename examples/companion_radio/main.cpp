@@ -391,6 +391,13 @@ static void meshTask(void*) {
       continue;
     }
     mproxy::setRadioIdle(false);
+#if defined(WITH_WIFI) && defined(ESP32)
+    // OTA in progress: the download task hammers flash on core 1, and each 64KB block-erase freezes
+    // the chip cache (= this core too) for ~hundreds of ms. Back off so core 0's idle/watchdog task
+    // still gets slices BETWEEN the freezes -- otherwise a fast (local) download's rapid back-to-back
+    // erases, on top of the mesh+WiFi load here, starve idle0 past the 5s task-WDT -> reset (task=ipc0).
+    if (the_mesh.otaBusy()) { vTaskDelay(2); continue; }
+#endif
     mproxy::drainCommands(the_mesh);    // execute UI-posted commands against the_mesh
     if (!the_mesh.getNodePrefs()->radio_off)   // radio kill-switch: don't transmit/receive
       the_mesh.loop();                  // process mesh; the 5 callbacks enqueue events
