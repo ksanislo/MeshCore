@@ -4690,6 +4690,7 @@ void UITask::reportCrashIfAny() {
   n += snprintf(rpt + n, sizeof(rpt) - n,
                 "reset_reason=%d  (4=PANIC 5=INT_WDT 6=TASK_WDT 7=WDT 8=DEEPSLEEP 12=SDIO)\n",
                 (int)esp_reset_reason());
+  n += snprintf(rpt + n, sizeof(rpt) - n, "fw=%s %s\n", LVGL_GUI_VERSION, FW_GIT_REV);  // identify the exact build/commit to decode against
 
   esp_core_dump_summary_t* s = (esp_core_dump_summary_t*)malloc(sizeof(esp_core_dump_summary_t));
   if (s && esp_core_dump_get_summary(s) == ESP_OK) {

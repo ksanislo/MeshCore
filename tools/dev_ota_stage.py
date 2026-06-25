@@ -10,6 +10,7 @@ Import("env")
 
 def stage(source, target, env):
     bin_path = env.subst("$BUILD_DIR/${PROGNAME}.bin")
+    elf_path = env.subst("$BUILD_DIR/${PROGNAME}.elf")
     out_dir = os.path.join(env["PROJECT_DIR"], ".devtmp", "ota")
     names = [env["PIOENV"]]
     alias = env.GetProjectOption("custom_ota_alias", "")
@@ -27,7 +28,13 @@ def stage(source, target, env):
             shutil.copyfile(bin_path, dst)
             with open(dst + ".md5", "w") as f:
                 f.write(digest)
-            print("dev_ota_stage: %s (md5 %s)" % (dst, digest))
+            # Keep the matching ELF beside each staged .bin. A coredump can ONLY be decoded against
+            # the EXACT elf that produced the running .bin -- and Arduino embeds a build timestamp, so
+            # the app-SHA changes every build and a later rebuild won't match. Without this, every
+            # crash on a dev build is undecodable (the .pio elf gets overwritten by the next build).
+            if os.path.isfile(elf_path):
+                shutil.copyfile(elf_path, os.path.join(out_dir, n + ".elf"))
+            print("dev_ota_stage: %s (md5 %s) [+elf]" % (dst, digest))
     except OSError as e:
         print("dev_ota_stage: skipped (%s)" % e)
 
