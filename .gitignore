@@ -20,3 +20,9 @@ platformio.local.ini
 
 # local dev scratch (persistent across reboots; not committed)
 .devtmp/
+.dummy/
+managed_components/
+dependencies.lock
+sdkconfig.defaults
+sdkconfig.*
+CMakeLists.txt.pio

@@ -1,8 +1,55 @@
 # Scoping: porting the LVGL companion to LilyGo T-Display P4 (ESP32-P4)
 
-Status: **IN PROGRESS — hardware in hand, work started on the `esp32p4` branch (2026-06).**
-Milestone 1 = de-risk toolchain + radio (LoRa-only USB node, no display/C6). Written 2026-06 as
-feasibility; updated with confirmed hardware below.
+Status: **COMMITTED PORT — T-Display-P4 AMOLED is the primary target; needs first-rate support.**
+Work on the `esp32p4` branch (2026-06). This is a full platform port (weeks), greenlit deliberately.
+
+**Milestone 1a DONE:** the companion COMPILES on P4 (pioarduino 55.03.39). **But pure Arduino won't
+BOOT this board** — proven empirically: silent in every config (both USB modes, both USB-C ports,
+conservative flash, PSRAM off, full-image flash, USB-Serial/JTAG). Root cause (control-test confirmed):
+this board's 32MB PSRAM is **HEX/16-line mode @200MHz** (`CONFIG_SPIRAM_MODE_HEX`), which the
+**prebuilt** Arduino/pioarduino IDF libs + bootloader can't express, so the bootloader hangs before any
+console. **Control test:** flashing the reference **Meck-P4** (pure-IDF) merged bin boots fine and
+brings up USB-CDC on the same port → hardware + flash-setup are 100% good; the wall is our toolchain.
+
+**Committed approach: PlatformIO `framework = arduino, espidf`** — build IDF from source with OUR
+`sdkconfig.defaults` (HEX PSRAM etc.), arduino-esp32 as a component, keeping our C++ codebase.
+
+**Reference:** github.com/pelgraine/Meck-P4 (a MeshCore fork, pure ESP-IDF, both panels working) — the
+authoritative source for sdkconfig, pins, XL9535 handling, DSI panel init, C6/ESP-Hosted. Its
+`sdkconfig.defaults`: `CONFIG_SPIRAM_MODE_HEX`, `CONFIG_SPIRAM_SPEED_200M`, `CONFIG_ESPTOOLPY_FLASHFREQ_120M`,
+`CONFIG_CACHE_L2_CACHE_256KB`/`_LINE_128B`, 16MB flash, TinyUSB CDC; partitions = nvs 0x6000 / phy 0x1000 /
+factory app 15M. IDF v5.4.1.
+
+**Milestone roadmap:** M2 boot (arduino+espidf + custom sdkconfig → USB console) · M3 radio (XL9535
+expander HAL) · M4 display (RM69A10 DSI via esp_lcd + GT9895 touch) · M5 connectivity (C6/ESP-Hosted:
+WiFi/MQTT/OTA + BLE) · M6 peripherals+release (BQ27220, L76K GPS, PCF8563, SDMMC, portrait 568x1232).
+
+## M2 progress (2026-06)
+**The hard science is SOLVED:** pioarduino's **`custom_sdkconfig`** option (`framework` stays `arduino`)
+triggers a "HybridCompile" that rebuilds IDF + arduino-esp32 **from source** with our merged sdkconfig —
+so this board's **HEX PSRAM** builds and the whole IDF (mbedtls, etc.) + our app **compiled and linked**.
+Recipe (in `variants/lilygo_tdisplay_p4/platformio.ini`):
+- `board = lilygo-tdisplay-p4` (`boards/lilygo-tdisplay-p4.json`: mcu esp32p4, 16MB, `psram_type hex`,
+  f_psram 200M, f_flash 120M qio).
+- `custom_sdkconfig`: `CONFIG_SPIRAM=y`, `CONFIG_SPIRAM_MODE_HEX=y`, `CONFIG_SPIRAM_SPEED_200M=y`,
+  `CONFIG_ESPTOOLPY_FLASHFREQ_120M=y`, `CONFIG_CACHE_L2_CACHE_256KB=y`/`_LINE_128B=y`,
+  `CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y`, and `CONFIG_FMB_MASTER_MAX_API_BLOCKING_TIME_MS=10000` (arduino
+  base leaves esp-modbus's blocking<timeout assertion tripped — one-line fix).
+- `board_build.partitions = variants/lilygo_tdisplay_p4/partitions.csv` (must be a real file path in the
+  IDF flow, not the arduino `default_16MB.csv` name).
+- Bring-up console = `ARDUINO_USB_MODE=1` (USB-Serial/JTAG, on the plugged port); TinyUSB CDC (mode 0)
+  needs `CONFIG_TINYUSB_CDC_ENABLED` and is deferred to the phone-companion data port.
+- First build is SLOW (compiles IDF from source, minutes).
+
+**OPEN M2 ISSUE (build-system plumbing, not science):** HybridCompile swaps in a `.dummy` "Hello World"
+sketch (its own `setup/loop`) as `PROJECT_SRC_DIR` to build the libs; our `build_src_filter` (which
+reaches into `../variants`/`../examples`) then links our source **alongside** the dummy → duplicate
+`setup/loop`. Two candidate resolutions, decide next: (A) tame the HybridCompile two-pass so `.dummy`
+isn't linked into the app (e.g. app sketch in the real src_dir), or (B) move this variant to
+`framework = arduino, espidf` (explicit CMake `idf_component_register(SRCS ...)`, no `build_src_filter`
+— cleaner/deterministic, matches the pure-IDF reference, but must enumerate our sources in CMake).
+Reference control test already proved the HW + flashing are good, so this is the only thing between us
+and a booting board.
 Verdict: **feasible but it's a platform port, not a variant add.** Two of the three pillars our UI
 rests on (LovyanGFX display, native BLE/WiFi radio) do not exist on ESP32-P4 and must be
 re-backended. Weeks of work vs. the few-day "new variant" the CrowPanel 2.4–7.0 siblings were.
