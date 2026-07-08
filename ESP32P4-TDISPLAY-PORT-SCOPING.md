@@ -1,10 +1,52 @@
 # Scoping: porting the LVGL companion to LilyGo T-Display P4 (ESP32-P4)
 
-Status: **feasibility only — no code, no hardware in hand.** Written 2026-06.
-Verdict up front: **feasible but it's a platform port, not a variant add.** Two of the three
-pillars our UI rests on (LovyanGFX display, native BLE/WiFi radio) do not exist on ESP32-P4 and
-must be re-backended. This is weeks of work with a hard hardware dependency, versus the few-day
-"new variant" the CrowPanel 2.4–7.0 siblings were. Park unless there's real demand + hardware.
+Status: **IN PROGRESS — hardware in hand, work started on the `esp32p4` branch (2026-06).**
+Milestone 1 = de-risk toolchain + radio (LoRa-only USB node, no display/C6). Written 2026-06 as
+feasibility; updated with confirmed hardware below.
+Verdict: **feasible but it's a platform port, not a variant add.** Two of the three pillars our UI
+rests on (LovyanGFX display, native BLE/WiFi radio) do not exist on ESP32-P4 and must be
+re-backended. Weeks of work vs. the few-day "new variant" the CrowPanel 2.4–7.0 siblings were.
+
+---
+
+## CONFIRMED HARDWARE — T-Display-P4 AMOLED (2026-06)
+Ground truth from LilyGo's own `components/private_library/t_display_p4_config.h`
+(github.com/Xinyuan-LilyGO/T-Display-P4) + repo README + BQ27220 PDF in-repo. **Corrects the
+earlier guesses in this doc** (esp. "maybe QSPI AMOLED" → it's DSI; and the radio pin story).
+
+**🔴 The dominant fact: an XL9535 I2C GPIO expander (addr 0x20, INT on GPIO5, I2C-1) gates almost
+everything** — power rails AND the SX1262's RST/DIO1. So *even the LoRa-only milestone* must bring
+up I2C + the XL9535 and assert power-enables before any peripheral responds. Peripheral power
+sequencing is expander-first.
+
+- **Display: MIPI-DSI, NOT QSPI.** Controller **RM69A10**, AMOLED **568×1232**, 2-lane DSI @
+  1000 Mbps/lane, 60 MHz DPI. Reset via `XL9535 IO2`. AMOLED brightness = DSI DCS command (no
+  backlight GPIO). (TFT SKU is HI8561 540×1168 — not our board.) → highest-risk pillar, deferred.
+- **Touch: GT9895** (I2C-1 `SDA=7/SCL=8`, addr 0x5D). RST=`XL9535 IO3`, INT=`XL9535 IO4`.
+- **LoRa: SX1262** (830–945 MHz; some BOMs use LR2021 — assume SX1262). SPI host "SPI_1":
+  `SCLK=2, MOSI=3, MISO=4`; `CS=24`, `BUSY=6`; **`RST=XL9535 IO16`, `DIO1=XL9535 IO17` (expander!)**.
+  RF switch `SKY13453 VCTL = XL9535 IO1`. SPI_1 is also on the `EXT_2X8P` header (share → mutex if
+  used). **SD and display do NOT share this SPI** (SD=SDMMC, display=DSI). TCXO/DIO2-RF-switch
+  config UNCONFIRMED (check LilyGo RadioLib example). **DIO1-on-expander = the #1 port risk**:
+  RadioLib wants a native IRQ pin; start by **polling DIO1 via the expander**, optimize to the
+  XL9535 INT (GPIO5) later.
+- **SD: SDMMC 4-bit** (`CLK=43, CMD=44, D0=39,D1=40,D2=41,D3=42`, power-enable `XL9535 IO15`,
+  `/sdcard`). Board also defines an SPI-SD fallback (`SCLK=43,MOSI=44,MISO=39,CS=42`). Our
+  SdFat/SdSvc assumes SPI → SPI-fallback may be the cheaper path. Deferred.
+- **Connectivity: ESP32-C6-MINI (4 MB) over SDIO 4-bit** (ESP-Hosted): P4 side `CLK=18, CMD=19,
+  D0=14,D1=15,D2=16,D3=17` (matches Espressif ESP32-P4-Function-EV exactly). C6 enable=`XL9535 IO14`,
+  wake=`XL9535 IO13`. Community: needs ESP-Hosted ≥ v2.9.4 on host+slave or WiFi drops. Deferred.
+- **Fuel gauge: TI BQ27220** (I2C-1, 0x55) — real gas gauge, V+% free (unlike CrowPanel).
+- **RTC: PCF8563** (I2C-1, 0x51) — same chip we already support. **GPS: L76K** UART (`TX=22, RX=23`,
+  wake `XL9535 IO11`). **IMU** ICM-20948, **audio** ES8311+NS4150B, **haptic** AW86224 — all on I2C-2
+  (`SDA=20/SCL=21`). **PMIC** SGM38121 (I2C-2, 0x28); rail enables via XL9535 (3V3=IO0, 5V=IO6,
+  P4 VCCA=IO10).
+- **Silicon:** 32 MB PSRAM, 16 MB flash, **native USB** (dual USB-C + USB-A host; no serial bridge),
+  boot button GPIO35. Two I2C buses (I2C-1 SDA7/SCL8, I2C-2 SDA20/SCL21).
+- **LilyGo stack = ESP-IDF 5.4 + LVGL 9 + their `cpp_bus_driver`** → reference only; we're
+  Arduino/pioarduino + LVGL 8.3.
+
+Repo: github.com/Xinyuan-LilyGO/T-Display-P4 (schematic + BQ27220 PDF under `information/`).
 
 ---
 
