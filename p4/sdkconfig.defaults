@@ -1,9 +1,10 @@
-# Board-correct sdkconfig for the LilyGo T-Display-P4 (subset of Meck-P4's proven config).
-# CONFIG_IDF_EXPERIMENTAL_FEATURES is required to unlock 200MHz HEX PSRAM -- without it the 200M
-# choice is rejected and the earlier boots hung. This is the likely missing piece.
+# Board-correct sdkconfig for the LilyGo T-Display-P4, built with ESP-IDF v5.4.1 (idf.py).
+# 5.4.1 (NOT pio's 5.5.4): 5.5.4 defaults rev min 301 and its rev-<3 build path is broken (_bss_start_low
+# link error); 5.4.1 defaults REV_MIN_1 (rev v0.1) which matches our chip, and 200MHz HEX PSRAM works
+# fine on it (proven by the LilyGo iic_scan boot).
+CONFIG_IDF_TARGET="esp32p4"
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-# 80MHz flash: esptool-accepted image-header freq (Meck runs 120M for LCD bandwidth; revisit later).
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_HEX=y
@@ -11,5 +12,7 @@ CONFIG_SPIRAM_SPEED_200M=y
 CONFIG_CACHE_L2_CACHE_256KB=y
 CONFIG_CACHE_L2_CACHE_LINE_128B=y
 CONFIG_FATFS_LFN_HEAP=y
-# Bring-up console on the USB-Serial/JTAG (P4 default primary console).
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Console on UART0 -> the board's CH340 USB-UART bridge (the non-OTG USB-C port). Read at 115200.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

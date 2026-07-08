@@ -24,6 +24,51 @@ factory app 15M. IDF v5.4.1.
 expander HAL) · M4 display (RM69A10 DSI via esp_lcd + GT9895 touch) · M5 connectivity (C6/ESP-Hosted:
 WiFi/MQTT/OTA + BLE) · M6 peripherals+release (BQ27220, L76K GPS, PCF8563, SDMMC, portrait 568x1232).
 
+## ★★ OUR BUILD BOOTS (2026-07) — full working recipe
+Our own `p4/` project boots on the device: rev v1.0 chip, **32MB PSRAM @ 200MHz**, our app_main
+heartbeat running. **Build with ESP-IDF v5.4.1 via idf.py (NOT pio/5.5.4).** Four root causes, all
+toolchain/observation:
+1. **IDF v5.4.1** — 5.5.4 defaults `REV_MIN_301` and its rev-<3 path won't link (`_bss_start_low`);
+   5.4.1 defaults `REV_MIN_1` (v0.1) and runs 200MHz HEX PSRAM on our silicon.
+2. **Chip is rev v1.0** — build for the low rev (5.4.1 default is fine).
+3. **Console = CH340 UART-bridge port** (the non-OTG USB-C), not the OTG/flash port.
+4. **CH340 DTR/RTS hold EN/BOOT** — open the serial port with **DTR=False, RTS=False** or the board
+   stays held in reset and looks silent (this was the last gremlin; esptool's watchdog-reset also
+   doesn't reliably run the app — a manual RESET/EN press does).
+
+**Reproduce (our p4/ project):**
+`source scratchpad/esp-idf-5.4.1/export.sh; cd p4; idf.py set-target esp32p4; idf.py build;`
+`idf.py -p <OTG-port> flash;` then read the **CH340 port** at 115200 with DTR/RTS de-asserted and tap
+RESET. Console = UART_DEFAULT; sdkconfig has HEX PSRAM 200M + IDF_EXPERIMENTAL_FEATURES + 16MB/80M flash.
+(pio env in p4/platformio.ini is retired for this board — use idf.py 5.4.1.)
+
+**Next:** vendor the LilyGo board tree (cpp_bus_driver + private_library) + MeshCore `src/` as a
+component onto this proven p4/ + 5.4.1 base (the Meck-P4 architecture), and build the radio.
+
+## ★ BOOT PROVEN (2026-06) — the two things that blocked everything
+A LilyGo example (`iic_scan`), built **as-shipped with ESP-IDF v5.4.1**, **BOOTS on our board** and its
+I2C scan finds the real devices (0x5D GT9895 touch, etc.). Two root causes, both toolchain/observation —
+NOT hardware:
+1. **Use ESP-IDF v5.4.1, NOT pio's 5.5.4.** Our chip is **ESP32-P4 rev v1.0** (early ES silicon). IDF
+   5.5.4 defaults `CONFIG_ESP32P4_REV_MIN_301` (rev v3.1) → firmware won't run, hangs before app_main.
+   IDF **5.4.1 defaults `CONFIG_ESP32P4_REV_MIN_1`** (rev v0.1) → compatible. Any P4 build for THIS board
+   must target `REV_MIN_1` (or `_100`). Install: clone esp-idf v5.4.1 + `install.sh esp32p4` (in
+   ~/.espressif; env at scratchpad/esp-idf-5.4.1). Flash freq as-shipped = 80M (not 120M).
+2. **Console is on the OTHER USB-C port (a CH340 USB-UART bridge).** The board has TWO USB-C ports:
+   - **USB-OTG port** = flashing / download mode / the factory TinyUSB "Device 123456" companion CDC.
+   - **CH340 UART-bridge port** (`1a86_USB_Single_Serial`) = the `UART_DEFAULT` console (`printf`/ESP_LOG).
+   We were watching the OTG port the whole time; the console comes out the CH340 port. Read it at 115200.
+   esptool's "hard reset with watchdog" does NOT reliably run the app — a MANUAL RESET/EN press is needed.
+
+**Build+flash+monitor the LilyGo baseline (reproducible):**
+`source scratchpad/esp-idf-5.4.1/export.sh; cd scratchpad/T-Display-P4; idf.py set-target esp32p4;`
+(select example via `CONFIG_EXAMPLE_BUILD_IIC_SCAN=y` in sdkconfig.defaults) `idf.py build; idf.py -p
+<OTG-port> flash;` then read the **CH340 port** at 115200 and tap RESET. (`iic_scan` builds clean;
+`lvgl_9_ui` needs `ENABLE_USB_DISPLAY` set so esp_tinyusb resolves.)
+
+**Next:** build MeshCore on this proven base — IDF 5.4.1 + LilyGo board tree (cpp_bus_driver +
+private_library) + MeshCore `src/` as a component (the Meck-P4 architecture), targeting REV_MIN_1.
+
 ## M2 progress (2026-06)
 **The hard science is SOLVED:** pioarduino's **`custom_sdkconfig`** option (`framework` stays `arduino`)
 triggers a "HybridCompile" that rebuilds IDF + arduino-esp32 **from source** with our merged sdkconfig —
