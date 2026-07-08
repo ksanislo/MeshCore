@@ -24,6 +24,28 @@ factory app 15M. IDF v5.4.1.
 expander HAL) · M4 display (RM69A10 DSI via esp_lcd + GT9895 touch) · M5 connectivity (C6/ESP-Hosted:
 WiFi/MQTT/OTA + BLE) · M6 peripherals+release (BQ27220, L76K GPS, PCF8563, SDMMC, portrait 568x1232).
 
+## MeshCore integration blueprint (2026-07) — fully mapped from Meck-P4
+Goal: our `src/` mesh core + radio running on p4/ (IDF 5.4.1) as a node. Meck-P4 is the exact recipe;
+our `src/` ≈ Meck's `meshcore_src` (same fork). Assemble a `p4/components/meshcore/`:
+- **arduino_compat.{h,cpp}** (vendor from Meck, GPL) — 84-line shim: `micros()`, `BOARD_HAS_PSRAM`,
+  `ps_malloc/ps_calloc`, `yield()`, an `ESPClass ESP` stub (getFreeHeap/getMaxAllocHeap), `ltoa`.
+  RadioLib supplies millis/delay/Serial/String.
+- **ed25519 C lib** (vendor Meck `meshcore_src/ed25519/`: ed_25519.h, fe/ge/keypair/add_scalar/
+  key_exchange/sha512.c) + **Ed25519.h shim** (12 lines: maps `Ed25519::verify/sign/derivePublicKey`
+  onto the C lib) — replaces the rweather/Crypto Arduino lib that `Identity.cpp` #includes.
+- **meshcore_src/** = our `src/` core: Mesh/Dispatcher/Packet/Identity/MeshCore.h + the CORE helper
+  subset (Meck ships ~4 of our 14 helpers; skip companion/UI/FS helpers, prune `IdentityStore.cpp`).
+- **Radio**: RadioLib component + LilyGo `radiolib_bridge_driver` (`Radiolib_Cpp_Bus_Driver_Hal`,
+  PROVEN) + t_display_p4_config.h. MeshCore `RADIO_CLASS` = CustomSX1262 over `new Module(hal, NC(cs),
+  NC(dio1), NC(rst), BUSY=6)`; XL9535 power rails + RST/RF-switch in setup; **DIO1 polled** (expander).
+- **Store**: NVS-backed DataStore (replace SPIFFS); **app_main**: Identity + mesh + radio_init +
+  advert. (Meck: MeckMesh:BaseChatMesh, MeckDataStore, meck_app.cpp — reference, don't need verbatim.)
+- CMakeLists REQUIRES (minimal, no UI/audio): cpp_bus_driver, private_library, mbedtls, nvs_flash,
+  esp_timer, esp_system, esp_hw_support, freertos, driver. Compile with -Wno-error=reorder/narrowing/
+  class-memaccess/sign-compare (MeshCore trips these).
+Effort: a focused build-out (assemble + debug the core compile, then wire radio + advert). All pieces
+identified; no unknowns left. Meck-P4 clone at scratchpad/Meck-P4 is the working reference.
+
 ## ★★★ RADIO WORKS (2026-07, M3) — SX1262 inits on our board
 LilyGo's `radiolib_sx1262_send_receive` example (IDF 5.4.1) prints **`sx1262 init success`** on our
 board: XL9535 expander up (id success), SPI configured (mosi3/sclk2/miso4/cs24), radio initialized.
