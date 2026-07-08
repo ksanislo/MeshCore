@@ -1,0 +1,4 @@
+dependencies:
+  # Hand-rolled TinyUSB CDC on the USB-OTG PHY = the board's proven console/companion path
+  # (same component Meck-P4 uses). Provides esp_tusb_init_console() to redirect stdout to CDC.
+  espressif/esp_tinyusb: "^1"

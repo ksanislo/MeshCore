@@ -1,0 +1,15 @@
+# Board-correct sdkconfig for the LilyGo T-Display-P4 (matches Meck-P4's proven config).
+# This is the whole reason for the from-source build: the 32MB PSRAM is HEX/16-line mode @200MHz,
+# which prebuilt Arduino can't express (and which hangs the stock bootloader).
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+# 80MHz flash: safe + esptool-accepted image-header freq. (Meck-P4 runs 120M for max LCD bandwidth;
+# revisit once booting -- 120m isn't a valid esptool elf2image flash-freq in this toolchain.)
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_HEX=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
+# Console/app output over a hand-rolled TinyUSB CDC on the USB-OTG (the plugged USB-C data port,
+# matching the factory/reference firmware). app_main redirects stdout to it via esp_tusb_init_console.
+CONFIG_TINYUSB_CDC_ENABLED=y

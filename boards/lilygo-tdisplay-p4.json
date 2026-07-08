@@ -5,7 +5,7 @@
       "-DBOARD_HAS_PSRAM"
     ],
     "f_cpu": "360000000L",
-    "f_flash": "120000000L",
+    "f_flash": "80000000L",
     "f_psram": "200000000L",
     "flash_mode": "qio",
     "psram_type": "hex",
@@ -15,7 +15,7 @@
   },
   "connectivity": [],
   "debug": { "openocd_target": "esp32p4.cfg" },
-  "frameworks": ["arduino"],
+  "frameworks": ["arduino", "espidf"],
   "hwids": [ ["0x303A", "0x1001"] ],
   "name": "LilyGo T-Display-P4",
   "upload": {

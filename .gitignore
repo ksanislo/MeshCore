@@ -26,3 +26,9 @@ dependencies.lock
 sdkconfig.defaults
 sdkconfig.*
 CMakeLists.txt.pio
+p4/.pio/
+p4/build/
+p4/managed_components/
+p4/dependencies.lock
+p4/sdkconfig
+p4/sdkconfig.tdisplay_p4
