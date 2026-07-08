@@ -24,6 +24,24 @@ factory app 15M. IDF v5.4.1.
 expander HAL) · M4 display (RM69A10 DSI via esp_lcd + GT9895 touch) · M5 connectivity (C6/ESP-Hosted:
 WiFi/MQTT/OTA + BLE) · M6 peripherals+release (BQ27220, L76K GPS, PCF8563, SDMMC, portrait 568x1232).
 
+## ★★★ RADIO WORKS (2026-07, M3) — SX1262 inits on our board
+LilyGo's `radiolib_sx1262_send_receive` example (IDF 5.4.1) prints **`sx1262 init success`** on our
+board: XL9535 expander up (id success), SPI configured (mosi3/sclk2/miso4/cs24), radio initialized.
+The mechanism MeshCore needs is proven:
+- **`Radiolib_Cpp_Bus_Driver_Hal`** (private_library/radiolib_bridge_driver) is a `RadioLibHal` subclass
+  that routes pinMode/digitalWrite/digitalRead/attachInterrupt/spi* through `cpp_bus_driver` — so the
+  SX1262's RST (XL9535 IO16) + DIO1 (IO17) work over the I2C expander. RadioLib `Module` is built with
+  CS/DIO1/RST = `RADIOLIB_NC` (HAL owns CS via its ctor; app manually resets RST + reads DIO1 via XL9535);
+  BUSY is native GPIO6. Radio power: XL9535 5V(IO6)=HIGH, 3V3(IO0)=LOW, RF switch SKY13453(IO1)=HIGH.
+- **The C6/ESP-Hosted stack caused a ~11s reboot-loop** and the earlier `-20 CHIP_NOT_FOUND`. Removing
+  `esp_hosted`+`esp_wifi_remote` from main/idf_component.yml → stable single boot + radio init success.
+  (C6/WiFi bring-up is its own task, M5.)
+- **Two USB-C ports usable concurrently**: OTG (flash/download) + CH340 UART (console) — flash one,
+  monitor the other, no cable swap.
+
+**M3 next:** bring RadioLib + this HAL into MeshCore's `src/` radio path (arduino-esp32 as an IDF
+component so MeshCore's Arduino APIs compile) → node joins the mesh.
+
 ## ★★ OUR BUILD BOOTS (2026-07) — full working recipe
 Our own `p4/` project boots on the device: rev v1.0 chip, **32MB PSRAM @ 200MHz**, our app_main
 heartbeat running. **Build with ESP-IDF v5.4.1 via idf.py (NOT pio/5.5.4).** Four root causes, all
