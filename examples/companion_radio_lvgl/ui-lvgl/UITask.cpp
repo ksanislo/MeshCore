@@ -18,6 +18,9 @@
 #include "../../companion_radio/RadioPresetStore.h"   // WiFi-updatable region presets (internal flash)
 #include <ctype.h>                      // tolower (case-insensitive search)
 #include <strings.h>                    // strcasecmp (A-Z contact sort)
+#if defined(UI_DISPLAY_ESP_LCD)
+#include "p4_display.h"                 // P4 esp_lcd LVGL backend (panel + flush + touch + tick)
+#endif
 
 // Dual-core shared-nothing boundary: the UI NEVER calls `the_mesh` directly.
 // Reads come from a published snapshot, writes go out as commands, and the mesh
@@ -131,10 +134,14 @@ void UITask::touchTaskFn(void* arg) {
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(15));   // wake on INT edge; else poll (track holds + lift)
     uint16_t tx = 0, ty = 0;
     bool raw = false;
+#if !defined(UI_DISPLAY_ESP_LCD)
     if (self->_lgfx && board_i2c_lock(50)) {
       raw = self->_lgfx->getTouch(&tx, &ty);
       board_i2c_unlock();
     }
+#else
+    (void)self;   // P4: touch is owned by the esp_lcd indev; this task never runs (no INT path)
+#endif
     uint32_t now = millis();
     if (raw) {
       s_t_x = (int16_t)tx;
@@ -194,6 +201,11 @@ static uint8_t s_channel_sender_colors = 1;   // channel bubbles: brand+color th
 // (Re)allocate the full double buffer: two DMA-capable internal buffers for pipelined flush. Bigger
 // => fewer flush chunks => less per-transaction overhead; fall back to fewer lines if DMA RAM is tight.
 void UITask::allocBigDrawBuf() {
+#if defined(UI_DISPLAY_ESP_LCD)
+  // P4: the esp_lcd backend (p4_display_lvgl_begin) owns the LVGL draw buffers +
+  // flush; UITask allocates nothing here.
+  return;
+#else
   size_t buf_pixels = 0;
   for (uint16_t lines = kBufferLines; lines >= 24; lines -= 8) {
     size_t px = (size_t)_screen_w * lines;
@@ -206,6 +218,7 @@ void UITask::allocBigDrawBuf() {
   }
   _buf_px = buf_pixels;
   lv_disp_draw_buf_init(&_draw_buf, _buf1, _buf2, buf_pixels);
+#endif  // UI_DISPLAY_ESP_LCD
 }
 
 // Shrink the LVGL draw buffers to free internal DMA RAM during an OTA, then restore. The TLS context
@@ -216,6 +229,12 @@ void UITask::allocBigDrawBuf() {
 // successful OTA reboots. MUST run on the UI thread, between lv_timer_handler() passes; we drain the
 // in-flight async flush DMA first so we never free a buffer the SPI engine is still reading.
 void UITask::setLowMemDrawBuf(bool low) {
+#if defined(UI_DISPLAY_ESP_LCD)
+  // P4: the esp_lcd backend owns the draw buffers; the OTA low-mem shrink is a
+  // no-op here (M5 will revisit if TLS RAM pressure appears on the P4).
+  (void)low;
+  return;
+#else
   if (low == _lvbuf_lowmem) return;
   if (_lgfx) { _lgfx->endWrite(); _lgfx->waitDMA(); }   // defensive: ensure no flush transaction/DMA is live before freeing buffers (flushes now self-drain, but cheap insurance)
   if (low) {
@@ -238,6 +257,7 @@ void UITask::setLowMemDrawBuf(bool low) {
   // blocks until this ack instead of guessing with a fixed delay. Only on a real transition -- a no-op
   // call early-returns above, and the flag already matches _lvbuf_lowmem from the last transition.
   mproxy::uiLowMemReady(low);
+#endif  // UI_DISPLAY_ESP_LCD
 }
 
 // Battery sampler, pinned to core 0 (the mesh core) at the mesh task's priority so it yields to packet
@@ -260,6 +280,12 @@ void UITask::battSampleTask(void* arg) {
 }
 
 void UITask::disp_flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_p) {
+#if defined(UI_DISPLAY_ESP_LCD)
+  // P4: p4_display registered its own esp_lcd flush; this LGFX flush is never used.
+  (void)area; (void)color_p;
+  lv_disp_flush_ready(drv);
+  return;
+#else
   if (!_instance || !_instance->_lgfx) {
     lv_disp_flush_ready(drv);
     return;
@@ -283,9 +309,16 @@ void UITask::disp_flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t
   lcd.endWrite();
   if (shared) board_bus_unlock();
   lv_disp_flush_ready(drv);
+#endif  // UI_DISPLAY_ESP_LCD
 }
 
 void UITask::touchpad_read_cb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
+#if defined(UI_DISPLAY_ESP_LCD)
+  // P4: p4_display registered its own GT9895 pointer indev; this callback is never used.
+  (void)drv;
+  data->state = LV_INDEV_STATE_REL;
+  return;
+#else
   if (!_instance || !_instance->_lgfx) {
     data->state = LV_INDEV_STATE_REL;
     return;
@@ -337,6 +370,7 @@ void UITask::touchpad_read_cb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
     _instance->_swallow_touch = false;      // finger lifted -> end the wake-swallow latch
     data->state = LV_INDEV_STATE_REL;
   }
+#endif  // UI_DISPLAY_ESP_LCD
 }
 
 // Physical keyboard -> LVGL keypad. board_kbd_read() returns the next pressed ASCII (0 = none);
@@ -4678,6 +4712,9 @@ void UITask::openChat(const char* peer_name) {
 // The PC + backtrace addresses are offline-decoded with xtensa-...-addr2line
 // against firmware.elf (match app_sha256 to be sure it's the right build).
 void UITask::reportCrashIfAny() {
+#if !defined(CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH)
+  return;   // coredump-to-flash not enabled in this build's sdkconfig (P4 M4d)
+#else
   if (esp_core_dump_image_check() != ESP_OK) return;   // no valid coredump stored -> normal boot
 
   char rpt[900];
@@ -4687,6 +4724,7 @@ void UITask::reportCrashIfAny() {
                 "reset_reason=%d  (4=PANIC 5=INT_WDT 6=TASK_WDT 7=WDT 8=DEEPSLEEP 12=SDIO)\n",
                 (int)esp_reset_reason());
 
+#if defined(CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF)
   esp_core_dump_summary_t* s = (esp_core_dump_summary_t*)malloc(sizeof(esp_core_dump_summary_t));
   if (s && esp_core_dump_get_summary(s) == ESP_OK) {
     n += snprintf(rpt + n, sizeof(rpt) - n, "task=%.16s\n", s->exc_task);
@@ -4703,6 +4741,10 @@ void UITask::reportCrashIfAny() {
     n += snprintf(rpt + n, sizeof(rpt) - n, "(coredump present, summary unavailable)\n");
   }
   if (s) free(s);
+#else
+  // ELF coredump-summary API not enabled in this build's sdkconfig (P4 M4d).
+  n += snprintf(rpt + n, sizeof(rpt) - n, "(coredump summary API unavailable in this build)\n");
+#endif
 
   // Prefer the SD card; fall back to internal SPIFFS.
   bool wrote = false;
@@ -4722,6 +4764,7 @@ void UITask::reportCrashIfAny() {
   esp_core_dump_image_erase();   // consume it so we don't re-report the same crash
 
   if (wrote) snprintf(_crash_note, sizeof(_crash_note), LV_SYMBOL_WARNING " Crash report: %s", where);
+#endif  // CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 }
 
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
@@ -4762,6 +4805,22 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (_node_prefs->contacts_filter <= 5) _contacts_filt  = _node_prefs->contacts_filter;
   }
 
+#if defined(UI_DISPLAY_ESP_LCD)
+  // P4/esp_lcd backend: the panel + LVGL display/flush + GT9895 touch indev + tick
+  // are all brought up by p4_display_lvgl_begin() (main.cpp already inited the panel).
+  // UITask therefore skips its own lv_init, draw-buffer alloc, flush + touch wiring.
+  (void)display;
+  lv_disp_t* p4disp = (lv_disp_t*)p4_display_lvgl_begin();
+  if (!p4disp) return;
+  _screen_w = lv_disp_get_hor_res(p4disp);
+  _screen_h = lv_disp_get_ver_res(p4disp);
+  if (_node_prefs && _node_prefs->display_brightness)
+    board_set_backlight(_node_prefs->display_brightness);
+  _backlight_duty = (_node_prefs && _node_prefs->display_brightness) ? _node_prefs->display_brightness : 153;
+  _last_input_ms = millis();
+  s_font_tier = fontTierFor(_node_prefs ? _node_prefs->font_scale : 0, _screen_w);
+  g_ui_metrics = METRICS_RAMP[s_font_tier];   // structural sizes follow the same tier as the fonts
+#else
   // Every variant that uses this LVGL UITask must derive its DISPLAY_CLASS
   // from LGFXDisplay so we can reach the underlying LovyanGFX device.
   LGFXDisplay* lgfx_disp = static_cast<LGFXDisplay*>(display);
@@ -4820,6 +4879,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _indev_drv.type    = LV_INDEV_TYPE_POINTER;
   _indev_drv.read_cb = touchpad_read_cb;
   lv_indev_drv_register(&_indev_drv);
+#endif  // UI_DISPLAY_ESP_LCD
 
   // One shared focus group, driven by the keyboard keypad indev AND (T-Deck) a trackball ENCODER indev.
   // Editable fields join it (makeSelTextarea) so physical keystrokes land in the tapped field; and
@@ -4840,9 +4900,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   }
   ensureKbdIndev();   // register the keypad indev now if a physical keyboard is already present (T-Deck)
 
+#if !defined(UI_DISPLAY_ESP_LCD)
   // Interrupt-driven touch: if the variant exposes a GT911 INT pin, read coords off the
   // INT edge in a dedicated high-priority task instead of polling getTouch on the LVGL loop.
   // Button hits then land the instant the finger touches, independent of UI frame time.
+  // (P4: the esp_lcd backend already registered its own GT9895 pointer indev.)
   int tint = board_touch_int_pin();
   if (tint >= 0) {
     pinMode(tint, INPUT);
@@ -4850,6 +4912,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     attachInterrupt(digitalPinToInterrupt(tint), touch_isr, CHANGE);
     s_touch_int_mode = true;   // read_cb now returns the latched state
   }
+#endif  // UI_DISPLAY_ESP_LCD
 
   if (_node_prefs) g_avatar_palette_mode = _node_prefs->avatar_palette ? 1 : 0;  // seed avatar scheme BEFORE any list renders
   if (_node_prefs) applyThemeByName(_node_prefs->theme_name);  // seed g_ui_palette BEFORE the UI builds (no rebuild yet)
@@ -9891,7 +9954,13 @@ void UITask::populateSettings() {
     lv_slider_set_value(_set_touchlock_slider, tl, LV_ANIM_OFF);
   }
 
+#if defined(UI_DISPLAY_ESP_LCD)
+  // P4: rotation is fixed by the panel timings; reflect the saved pref (1-based; 0 = unset).
+  lv_dropdown_set_selected(_set_rot_dd, (_node_prefs && _node_prefs->display_rotation)
+                                          ? ((_node_prefs->display_rotation - 1) & 3) : 0);
+#else
   lv_dropdown_set_selected(_set_rot_dd, _lgfx ? (_lgfx->getRotation() & 3) : 0);
+#endif
 
   if (_set_font_dd)
     lv_dropdown_set_selected(_set_font_dd, _node_prefs->font_scale <= 3 ? _node_prefs->font_scale : 0);
@@ -9935,7 +10004,15 @@ void UITask::populateSettings() {
   setSw(_set_wifi_dns_ovr, _node_prefs->wifi_dns_override);
   { auto setIp = [](lv_obj_t* ta, uint32_t v) {
       if (!ta) return;
+#if defined(P4_IDF_PLATFORM)
+      // WiFi is deferred on P4 (no Arduino IPAddress); show the dotted quad directly.
+      if (v) { char b[16]; snprintf(b, sizeof(b), "%u.%u.%u.%u",
+               (unsigned)((v >> 24) & 0xFF), (unsigned)((v >> 16) & 0xFF),
+               (unsigned)((v >> 8) & 0xFF), (unsigned)(v & 0xFF));
+               lv_textarea_set_text(ta, b); } else lv_textarea_set_text(ta, "");
+#else
       if (v) { IPAddress a(v); lv_textarea_set_text(ta, a.toString().c_str()); } else lv_textarea_set_text(ta, "");
+#endif
     };
     setIp(_set_wifi_ip, _node_prefs->wifi_ip);
     setIp(_set_wifi_mask, _node_prefs->wifi_netmask);
@@ -11636,6 +11713,7 @@ void UITask::set_history_cb(lv_event_t* e) {
 // busy-spin (core-0 TASK_WDT). We recreate the boot condition: ask meshTask to park, wait for its
 // idle ack (bounded), do the mount with the radio untouched, then release. Returns ready().
 bool UITask::sdMountQuiesced() {
+#ifdef HAS_SD_CARD
 #ifdef MESH_PROXY
   mproxy::requestRadioPause(true);
   uint32_t t0 = millis();
@@ -11646,6 +11724,9 @@ bool UITask::sdMountQuiesced() {
   mproxy::requestRadioPause(false);         // resume the radio (it sat in RX, untouched)
 #endif
   return _sdmsgs.ready();
+#else
+  return false;   // no SD facility on this build (P4: chat history deferred)
+#endif
 }
 
 // Top-bar SD-card icon tap: a user-initiated (re)mount. We never auto-mount on access (that blocks
@@ -12128,9 +12209,18 @@ void UITask::wifiApplyFromForm() {
   p->wifi_dhcp = lv_obj_has_state(_set_wifi_dhcp, LV_STATE_CHECKED) ? 1 : 0;
   p->wifi_dns_override = lv_obj_has_state(_set_wifi_dns_ovr, LV_STATE_CHECKED) ? 1 : 0;
   auto parseIp = [](lv_obj_t* ta) -> uint32_t {
+#if defined(P4_IDF_PLATFORM)
+    // WiFi deferred on P4: parse the dotted quad ourselves (no Arduino IPAddress).
+    const char* t = lv_textarea_get_text(ta);
+    unsigned a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+    if (t && t[0] && sscanf(t, "%u.%u.%u.%u", &a0, &a1, &a2, &a3) == 4)
+      return ((a0 & 0xFF) << 24) | ((a1 & 0xFF) << 16) | ((a2 & 0xFF) << 8) | (a3 & 0xFF);
+    return 0;
+#else
     IPAddress a; const char* t = lv_textarea_get_text(ta);
     if (t && t[0] && a.fromString(t)) return (uint32_t)a;
     return 0;
+#endif
   };
   if (!p->wifi_dhcp) {                 // static: take all four from the form
     p->wifi_ip = parseIp(_set_wifi_ip);

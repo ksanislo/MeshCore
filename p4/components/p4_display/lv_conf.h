@@ -55,21 +55,55 @@
     #define LV_LOG_PRINTF 1
 #endif
 
+/* Complex draw (arcs, rounded masks, letter-by-letter text selection). */
+#define LV_DRAW_COMPLEX 1
+
 /*==================
    FONT USAGE
  *==================*/
 
-#define LV_FONT_MONTSERRAT_14 1
-#define LV_FONT_MONTSERRAT_28 1
+/* The shared UI's type ramp + structural metrics use these montserrat sizes;
+ * keep in sync with FONT_RAMP in UITask (Small/Medium/Large tiers). */
+#define LV_FONT_MONTSERRAT_8            0
+#define LV_FONT_MONTSERRAT_10           1
+#define LV_FONT_MONTSERRAT_12           1
+#define LV_FONT_MONTSERRAT_14           1
+#define LV_FONT_MONTSERRAT_16           1
+#define LV_FONT_MONTSERRAT_18           1
+#define LV_FONT_MONTSERRAT_20           1
+#define LV_FONT_MONTSERRAT_24           1
+#define LV_FONT_MONTSERRAT_28           1
+#define LV_FONT_UNSCII_8                1
+#define LV_FONT_DEFAULT                 &lv_font_montserrat_14
 
-/* Default text font. */
-#define LV_FONT_DEFAULT &lv_font_montserrat_14
+/*==================
+   TEXT SETTINGS
+ *==================*/
+
+/* SOH control char as the recolor command (NOT '#') so a literal '#' hashtag can
+ * be recolored; the UI generates all recolor markup itself and strips \x01 from
+ * input. MUST match the S3 lv_conf.h or chat recoloring breaks. */
+#define LV_TXT_COLOR_CMD                "\x01"
+#define LV_TXT_LINE_BREAK_LONG_LEN      0
 
 /*==================
    WIDGET USAGE
  *==================*/
 
 #define LV_USE_LABEL 1
+#define LV_LABEL_TEXT_SELECTION 1
+#define LV_LABEL_LONG_TXT_HINT  1
+
+/*==================
+   EXTRA FEATURES the shared UI needs
+ *==================*/
+
+#define LV_USE_IMGFONT 1      // color-emoji imgfont fallback (withEmoji)
+#define LV_USE_QRCODE  1      // share / contact QR codes
+#define LV_USE_SPAN    1
+#define LV_SPAN_SNIPPET_STACK_SIZE 64
+// Decoded-image cache so scrolling emoji aren't re-read every frame.
+#define LV_IMG_CACHE_DEF_SIZE 48
 
 #endif /*LV_CONF_H*/
 

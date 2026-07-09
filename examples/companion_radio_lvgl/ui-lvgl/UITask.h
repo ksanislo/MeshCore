@@ -2,7 +2,9 @@
 
 #include <Arduino.h>
 #include <lvgl.h>
-#include <helpers/ui/LGFXDisplay.h>
+#if !defined(UI_DISPLAY_ESP_LCD)
+#include <helpers/ui/LGFXDisplay.h>   // LovyanGFX-backed display (S3 boards)
+#endif
 #include "../../companion_radio/AbstractUITask.h"
 #include "../../companion_radio/NodePrefs.h"
 #include "MessageStore.h"
@@ -24,7 +26,9 @@
 struct UiPalette;   // ui_theme.h (full definition); only a reference is used here
 
 class UITask : public AbstractUITask {
-  LGFX_Device*    _lgfx;
+#if !defined(UI_DISPLAY_ESP_LCD)
+  LGFX_Device*    _lgfx;             // LovyanGFX device (S3); the P4 esp_lcd backend owns its own
+#endif
   NodePrefs*      _node_prefs;       // -> _node_prefs_store (UI-owned working copy)
   NodePrefs       _node_prefs_store; // seeded from the snapshot; edits push CMD_UpdatePrefs
   uint32_t        _last_snap_version;// last mproxy snapshot version the UI rebuilt from
@@ -1293,7 +1297,10 @@ private:
 public:
   UITask(mesh::MainBoard* board, BaseSerialInterface* serial)
     : AbstractUITask(board, serial),
-      _lgfx(NULL), _node_prefs(NULL), _sensors(NULL),
+#if !defined(UI_DISPLAY_ESP_LCD)
+      _lgfx(NULL),
+#endif
+      _node_prefs(NULL), _sensors(NULL),
       _started(false), _last_tick_ms(0), _msgcount(0),
       _last_input_ms(0), _display_off(false), _swallow_touch(false), _touch_down(false), _backlight_duty(153),
       _splash_screen(NULL), _home_screen(NULL),

@@ -70,6 +70,7 @@ class ESPClass {
 public:
     uint32_t getFreeHeap() { return esp_get_free_heap_size(); }
     uint32_t getMaxAllocHeap() { return heap_caps_get_largest_free_block(MALLOC_CAP_8BIT); }
+    uint32_t getFreePsram() { return heap_caps_get_free_size(MALLOC_CAP_SPIRAM); }
     void restart() { esp_restart(); }
 };
 

@@ -40,6 +40,12 @@
 extern "C" void p4_backend_smoke(void);
 static volatile bool s_run_backend_smoke = false;
 
+// M4d (UI): same link-forcer for the shared LVGL UI (UITask + asset TUs). Never
+// runs (volatile-false); referencing it makes every UITask symbol a build-time
+// link requirement. The real app_main UI wiring lands in M4d-3.
+extern "C" void p4_ui_smoke(void);
+static volatile bool s_run_ui_smoke = false;
+
 // ---- Board hardware globals (external linkage; referenced by p4_radio.cpp) ----
 // IIC-1 bus (SDA7/SCL8) carries the XL9535 expander (and later touch/RTC/gauge).
 auto XL9535_IIC_Bus = std::make_shared<Cpp_Bus_Driver::Hardware_Iic_1>(
@@ -158,6 +164,7 @@ static bool board_radio_begin(void) {
 extern "C" void app_main(void) {
     // Never true — forces the companion backend into the link (see declaration above).
     if (s_run_backend_smoke) p4_backend_smoke();
+    if (s_run_ui_smoke) p4_ui_smoke();
 
     printf("\n=== T-Display-P4: MeshCore radio bring-up (M3.5) ===\n");
     printf("PSRAM total: %u bytes\n",

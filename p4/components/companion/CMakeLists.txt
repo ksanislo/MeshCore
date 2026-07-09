@@ -1,15 +1,24 @@
 # companion — the shared MeshCore companion BACKEND (MyMesh + DataStore +
-# RadioPresetStore + MeshProxy) compiled IN PLACE from examples/ via relative
-# paths (no copies -> no drift). Connectivity (WiFi/BLE/MQTT) is compiled OFF for
-# this milestone; MESH_PROXY is ON (dual-core snapshot/command/event model). The
-# UI (UITask) is NOT built here — that is a later stage.
+# RadioPresetStore + MeshProxy) AND the shared LVGL UI (UITask + asset TUs),
+# compiled IN PLACE from examples/ via relative paths (no copies -> no drift).
+# Connectivity (WiFi/BLE/MQTT) is compiled OFF for this milestone; MESH_PROXY is
+# ON (dual-core snapshot/command/event model). The UI uses the P4 esp_lcd display
+# backend (UI_DISPLAY_ESP_LCD seam) instead of LovyanGFX; SD / map / emoji-pack are
+# deferred and satisfied by the p4_ui_stubs.cpp no-op TU.
 idf_component_register(
     SRCS
         "../../../examples/companion_radio/MyMesh.cpp"
         "../../../examples/companion_radio/DataStore.cpp"
         "../../../examples/companion_radio/RadioPresetStore.cpp"
         "../../../examples/companion_radio_lvgl/ui-lvgl/MeshProxy.cpp"
+        "../../../examples/companion_radio_lvgl/ui-lvgl/UITask.cpp"
+        "../../../examples/companion_radio_lvgl/ui-lvgl/meshcore_emoji_14.cpp"
+        "../../../examples/companion_radio_lvgl/ui-lvgl/meshcore_icons_16.cpp"
+        "../../../examples/companion_radio_lvgl/ui-lvgl/meshcore_logo_alpha.cpp"
+        "../../../examples/companion_radio_lvgl/ui-lvgl/meshcore_logo_img.cpp"
         "p4_target.cpp"
+        "p4_ui_stubs.cpp"
+        "p4_ui_smoke.cpp"
     INCLUDE_DIRS
         "."
         "../../../examples/companion_radio"
@@ -19,11 +28,14 @@ idf_component_register(
         fs_shim
         board_hw
         cpp_bus_driver
+        p4_display
+        lvgl
         nvs_flash
         esp_timer
         esp_system
         driver
         esp_hw_support
+        espcoredump
 )
 
 # Connectivity OFF, dual-core proxy ON. ENV_INCLUDE_GPS pinned to 0 (GPS bring-up
@@ -31,6 +43,11 @@ idf_component_register(
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     MESH_PROXY=1
     ENV_INCLUDE_GPS=0
+    # Display seam: the UI drives our esp_lcd backend (p4_display) instead of
+    # LovyanGFX. Gates every _lgfx / LGFX touch point in UITask.{h,cpp}.
+    UI_DISPLAY_ESP_LCD=1
+    # Radio TX-power ceiling for the UI's radio-settings validation (SX1262).
+    LORA_TX_POWER=22
     # MAX_CONTACTS / MAX_GROUP_CHANNELS are defined GLOBALLY in the root
     # CMakeLists (they must match the meshcore component's BaseChatMesh).
 )
