@@ -9,6 +9,7 @@ idf_component_register(
         ${CORE_SRCS}
         ${ED25519_SRCS}
         "arduino_compat.cpp"
+        "p4_radio.cpp"
     INCLUDE_DIRS
         "."
         "meshcore_src"
@@ -17,6 +18,7 @@ idf_component_register(
     REQUIRES
         arduino_cpp_bus_driver
         cpp_bus_driver
+        board_hw
         mbedtls
         nvs_flash
         esp_timer

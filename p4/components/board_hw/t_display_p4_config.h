@@ -6,6 +6,10 @@
  */
 #pragma once
 
+// The XL9535 pin macros below reference Cpp_Bus_Driver::Xl95x5::Pin::* enums,
+// so this header is not standalone — pull in the driver umbrella.
+#include "cpp_bus_driver_library.h"
+
 ////////////////////////////////////////////////// gpio config //////////////////////////////////////////////////
 
 // IIC
