@@ -29,9 +29,15 @@
    MEMORY SETTINGS
  *=========================*/
 
-/* LVGL's internal allocator. 48 KB is comfortable for the bring-up UI. */
-#define LV_MEM_CUSTOM 0
-#define LV_MEM_SIZE (48U * 1024U)
+/* Route LVGL's heap to PSRAM. The full UITask UI (all screens/panes/fonts) needs
+ * far more than the 48 KB bring-up pool did (the S3 build uses a 256 KB internal
+ * pool); on the P4 we have 32 MB PSRAM, so back LV_MEM with heap_caps SPIRAM and
+ * keep internal RAM free for stacks + the DMA draw buffers. */
+#define LV_MEM_CUSTOM 1
+#define LV_MEM_CUSTOM_INCLUDE        "esp_heap_caps.h"
+#define LV_MEM_CUSTOM_ALLOC(sz)      heap_caps_malloc((sz), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+#define LV_MEM_CUSTOM_REALLOC(p, sz) heap_caps_realloc((p), (sz), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+#define LV_MEM_CUSTOM_FREE           heap_caps_free
 
 /*====================
    HAL SETTINGS

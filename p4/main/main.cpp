@@ -28,9 +28,15 @@
 #include "board_touch.h"    // board_touch_init(), board_touch_read()
 #include "FS.h"             // fs_mount_spiffs()
 
-// Isolate the display bring-up: 1 = LVGL self-test only (no radio/node), so a
-// bad screen is unambiguously a display issue. Set 0 to run the mesh node.
-#define P4_DISPLAY_SELFTEST 1
+// Boot mode:
+//   0 = headless mesh node (p4_node, no UI)
+//   1 = display/LVGL self-test (no radio/backend)
+//   2 = full companion GUI (backend + UITask) — the real firmware
+#define P4_APP_MODE 2
+
+// The full companion entry point (companion component). Brings up the backend on
+// core 0 + UITask on core 1 after the hardware is ready.
+extern "C" void p4_app_run(void);
 
 // M4d: the shared companion BACKEND (MyMesh + DataStore + MeshProxy) is compiled
 // + linked but not yet driven (UITask lands later). p4_backend_smoke() is defined
@@ -182,7 +188,7 @@ extern "C" void app_main(void) {
 
     board_power_up();
 
-#if P4_DISPLAY_SELFTEST
+#if P4_APP_MODE == 1
     // Display-only proof. p4_display_init pulses XL9535_SCREEN_RST (via this
     // callback) in the reference order: LDO up -> settle -> reset -> panel.
     printf("[main] display self-test...\n");
@@ -192,13 +198,30 @@ extern "C" void app_main(void) {
     }
     board_touch_init();
     p4_display_selftest();
-#else
+
+#elif P4_APP_MODE == 0
     if (!board_radio_begin()) {
         printf("radio bring-up failed; halting.\n");
         while (true) vTaskDelay(pdMS_TO_TICKS(1000));
     }
     meck_radio_attach();
     p4_node_start();
+
+#else  // P4_APP_MODE == 2: full companion GUI
+    // Panel + touch first (UITask.begin -> p4_display_lvgl_begin needs the panel
+    // up), then the radio, then hand off to the companion (backend + UI tasks).
+    printf("[main] bringing up display + touch + radio...\n");
+    if (!p4_display_init(board_screen_reset_pulse)) {
+        printf("[main] p4_display_init FAILED; halting.\n");
+        while (true) vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    board_touch_init();
+    if (!board_radio_begin()) {
+        printf("[main] radio bring-up failed; continuing (UI still usable)\n");
+    } else {
+        meck_radio_attach();
+    }
+    p4_app_run();
 #endif
 
     while (true) {

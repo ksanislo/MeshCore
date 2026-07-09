@@ -16,15 +16,42 @@
 #include "target.h"
 #include "MyMesh.h"
 #include "MeshProxy.h"
-#include "FS.h"                       // fs::InternalFS
+#include "UITask.h"                   // the shared LVGL UI (AbstractUITask for MyMesh)
+#include <helpers/BaseSerialInterface.h>
+#include "FS.h"                       // fs::InternalFS, fs_mount_spiffs()
 #include <helpers/ArduinoHelpers.h>   // StdRNG, VolatileRTCClock
 #include <helpers/SimpleMeshTables.h>
 #include "esp_random.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 
 // ---- Variant globals referenced by the shared backend -----------------------
 P4Board        board;
 SensorManager  sensors;              // base: no environment sensors on P4 yet
+
+// Companion transport. No BLE/WiFi on P4 yet (C6 co-processor is M5) — a null
+// serial interface satisfies the UITask/MyMesh dependency; the phone companion
+// comes online at M5.
+namespace {
+class NullSerial : public BaseSerialInterface {
+public:
+  void   enable() override {}
+  void   disable() override {}
+  bool   isEnabled() const override { return false; }
+  bool   isConnected() const override { return false; }
+  bool   isWriteBusy() const override { return false; }
+  size_t writeFrame(const uint8_t*, size_t) override { return 0; }
+  size_t checkRecvFrame(uint8_t*) override { return 0; }
+};
+}  // namespace
+static NullSerial serial_interface;
+
+// The UI task. Constructed BEFORE the_mesh so it can be handed in as the mesh's
+// AbstractUITask — MyMesh derefs _ui (unguarded, e.g. newMsg) so it must be
+// non-NULL; in MESH_PROXY mode those callbacks cook+enqueue to MeshProxy from
+// core 0 and UITask::drainEvents() applies them on core 1.
+UITask ui_task(&board, &serial_interface);
 
 // Collaborators for MyMesh (mirror examples/companion_radio/main.cpp).
 StdRNG            fast_rng;
@@ -32,9 +59,8 @@ VolatileRTCClock  rtc_clock;         // soft clock; battery RTC lands at M6
 SimpleMeshTables  tables;
 DataStore         store(fs::InternalFS, rtc_clock);
 
-// The shared companion backend singleton (declared `extern` in MyMesh.h). No UI
-// task on P4 yet (UITask is a later stage), so the AbstractUITask* arg is NULL.
-MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
+// The shared companion backend singleton (declared `extern` in MyMesh.h).
+MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store, &ui_task);
 
 // ---- Backend target hooks ---------------------------------------------------
 bool radio_init() {
@@ -64,6 +90,56 @@ void radio_set_tx_power(int8_t dbm) {
 }
 void radio_sleep()   { p4hw_radio_sleep(); }
 void radio_standby() { p4hw_radio_standby(); }
+
+// ---- The live companion: backend on core 0, UI on core 1 --------------------
+static volatile bool s_ui_ready = false;
+
+// Backend loop, pinned to core 0 (mirrors examples/companion_radio/main.cpp).
+static void meshTask(void*) {
+  while (!s_ui_ready) vTaskDelay(1);   // let the UI finish init first
+  for (;;) {
+    if (mproxy::radioPauseRequested()) { mproxy::setRadioIdle(true); vTaskDelay(2); continue; }
+    mproxy::setRadioIdle(false);
+    mproxy::drainCommands(the_mesh);                 // UI-posted commands -> the_mesh
+    if (!the_mesh.getNodePrefs()->radio_off) the_mesh.loop();
+    mproxy::publishIfChanged(the_mesh);              // republish snapshot on change
+    mproxy::updateStats(the_mesh);                   // live counters
+    vTaskDelay(1);
+  }
+}
+
+// LVGL + UITask, pinned to core 1. begin() brings up LVGL over esp_lcd
+// (p4_display_lvgl_begin via the UI_DISPLAY_ESP_LCD seam) and builds the UI.
+static void uiTask(void*) {
+  ui_task.begin(nullptr, &sensors, the_mesh.getNodePrefs());
+  s_ui_ready = true;                                 // release the core-0 backend
+  for (;;) {
+    ui_task.loop();
+    rtc_clock.tick();
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+}
+
+// Called from app_main AFTER the hardware is up (rails, panel init, touch, radio
+// attach). Seeds the backend + snapshot, then spawns the two cores' tasks.
+extern "C" void p4_app_run(void) {
+  fast_rng.begin(esp_random());
+  store.begin();
+  the_mesh.begin(false);
+
+  // Attach the (null) companion transport so MyMesh::checkSerialInterface has a
+  // valid _serial. The real BLE/WiFi companion arrives with the C6 at M5.
+  the_mesh.startInterface(serial_interface);
+
+  if (!mproxy::init()) printf("[app] MeshProxy init failed\n");
+  mproxy::setBackend(the_mesh);
+  mproxy::publishIfChanged(the_mesh);   // seed snapshot before the UI reads it
+
+  // Reserve the backend task stack before the UI allocates (S3 heap-order habit).
+  xTaskCreatePinnedToCore(meshTask, "mesh", 16384, nullptr, 1, nullptr, 0);   // core 0
+  xTaskCreatePinnedToCore(uiTask,   "ui",   32768, nullptr, 2, nullptr, 1);   // core 1
+  printf("[app] companion running: backend core0, UI core1\n");
+}
 
 // ---- Link/smoke forcer ------------------------------------------------------
 // NEVER called in normal boot (see main.cpp's volatile guard). Touches MyMesh,
