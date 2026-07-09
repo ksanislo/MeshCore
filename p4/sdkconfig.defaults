@@ -19,3 +19,5 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # LVGL: use our vendored components/p4_display/lv_conf.h (pointed to via
 # -DLV_CONF_PATH in the top-level CMakeLists.txt) instead of Kconfig.
 CONFIG_LV_CONF_SKIP=n
+# 1000Hz tick: smooth LVGL + vTaskDelay(5ms) actually yields (100Hz rounds it to 0).
+CONFIG_FREERTOS_HZ=1000

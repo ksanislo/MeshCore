@@ -214,11 +214,11 @@ static lv_disp_draw_buf_t s_draw_buf;
 
 static void p4d_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
 {
-    (void)area; (void)color_p;
-    // LVGL renders straight into the scanned DPI frame buffer (full_refresh +
-    // draw_buf == the panel FB), so there is nothing to copy — just release.
-    // (Avoids esp_lcd_panel_draw_bitmap, which blocked on the DPI FB sync.)
-    lv_disp_flush_ready(drv);
+    esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)drv->user_data;
+    // DMA2D copies the LVGL buffer into the scanned frame buffer (handles the
+    // source cache write-back). flush_ready is signalled from the DPI
+    // on_color_trans_done ISR when the copy completes (reference pattern).
+    esp_lcd_panel_draw_bitmap(panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_p);
 }
 
 static bool p4d_flush_ready_hook(void *ctx)
@@ -234,6 +234,15 @@ static void p4d_lvgl_tick_cb(void *arg)
     lv_tick_inc(P4D_LVGL_TICK_MS);
 }
 
+// While a flush is in-flight and LVGL needs the buffer back, yield the CPU
+// (block briefly) instead of busy-spinning — otherwise the LVGL task pins its
+// core and starves the idle task -> task WDT.
+static void p4d_wait_cb(lv_disp_drv_t *drv)
+{
+    (void)drv;
+    vTaskDelay(1);
+}
+
 static void p4d_selftest_task(void *arg)
 {
     (void)arg;
@@ -245,35 +254,63 @@ static void p4d_selftest_task(void *arg)
         return;
     }
 
-    // Panel proof, EXACTLY the reference pattern (screen_lvgl standalone test):
-    // push full-screen solid colors via esp_lcd_panel_draw_bitmap, which does
-    // the DMA2D copy into the scanned frame buffer + cache write-back. A
-    // cache-line-aligned PSRAM buffer is required. No LVGL yet — this isolates
-    // the panel/DSI/brightness from the LVGL integration.
-    const size_t px = (size_t)P4D_WIDTH * P4D_HEIGHT;
-    uint16_t *cbuf = (uint16_t *)heap_caps_aligned_calloc(
-        64, 1, px * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
-    if (!cbuf) {
-        ESP_LOGE(TAG, "selftest: buffer alloc failed");
+    // ---- LVGL 8.3 over the (now-proven) panel, reference pattern ----
+    lv_init();
+
+    // Double-buffered partial render (1/10 screen each) in PSRAM: LVGL renders
+    // one buffer while the other DMA2D-flushes, so it never stalls on a full
+    // frame. flush_cb DMA2D-copies each area into the scanned frame buffer.
+    const int DRAW_LINES = 120;
+    size_t buf_px = (size_t)P4D_WIDTH * DRAW_LINES;
+    lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
+                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+    lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
+                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+    if (!buf1 || !buf2) {
+        ESP_LOGE(TAG, "selftest: draw buffer alloc failed");
         vTaskDelete(NULL);
         return;
     }
+    lv_disp_draw_buf_init(&s_draw_buf, buf1, buf2, buf_px);
+
+    lv_disp_drv_init(&s_disp_drv);
+    s_disp_drv.hor_res   = P4D_WIDTH;
+    s_disp_drv.ver_res   = P4D_HEIGHT;
+    s_disp_drv.flush_cb  = p4d_lvgl_flush_cb;
+    s_disp_drv.draw_buf  = &s_draw_buf;
+    s_disp_drv.wait_cb   = p4d_wait_cb;   // yield (not busy-spin) while flushing
+    s_disp_drv.user_data = p4_display_panel();
+    lv_disp_t *disp = lv_disp_drv_register(&s_disp_drv);
+
+    // flush-ready via the DPI on_color_trans_done ISR (DMA2D copy complete).
+    p4_display_register_flush_ready_cb(p4d_flush_ready_hook, &s_disp_drv);
+
+    // LVGL tick from esp_timer.
+    const esp_timer_create_args_t tick_args = {
+        .callback = p4d_lvgl_tick_cb,
+        .name     = "lvgl_tick",
+    };
+    esp_timer_handle_t tick_timer = NULL;
+    esp_timer_create(&tick_args, &tick_timer);
+    esp_timer_start_periodic(tick_timer, P4D_LVGL_TICK_MS * 1000);
+
+    // Proof UI: blue background + centered label.
+    lv_obj_t *scr = lv_disp_get_scr_act(disp);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x0033AA), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+    lv_obj_t *label = lv_label_create(scr);
+    lv_label_set_text(label, "T-Display-P4 LVGL OK");
+    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_28, LV_PART_MAIN);
+    lv_obj_center(label);
 
     p4_display_set_brightness(255);
 
-    const uint16_t colors[] = {0xF800 /*red*/, 0x07E0 /*green*/,
-                               0x001F /*blue*/, 0xFFFF /*white*/};
-    const char *names[] = {"RED", "GREEN", "BLUE", "WHITE"};
-    int c = 0;
-    ESP_LOGI(TAG, "selftest: draw_bitmap color cycle");
+    ESP_LOGI(TAG, "selftest: LVGL UI up; entering handler loop");
     while (true) {
-        for (size_t i = 0; i < px; i++) cbuf[i] = colors[c];
-        esp_err_t e = esp_lcd_panel_draw_bitmap(p4_display_panel(), 0, 0,
-                                                P4D_WIDTH, P4D_HEIGHT, cbuf);
-        printf("[disp] draw_bitmap fill: %-5s (err=%s)  <-- LOOK AT SCREEN\n",
-               names[c], esp_err_to_name(e));
-        c = (c + 1) % 4;
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        lv_timer_handler();
+        vTaskDelay(pdMS_TO_TICKS(5));   // 5 ticks @1000Hz FreeRTOS tick
     }
 }
 
