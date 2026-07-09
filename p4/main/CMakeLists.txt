@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS "."
-    REQUIRES meshcore board_hw cpp_bus_driver driver esp_hw_support
+    REQUIRES meshcore board_hw cpp_bus_driver driver esp_hw_support fs_shim
 )
 
 # main.cpp includes MeshCore headers (Dispatcher.h) that trip these warnings;

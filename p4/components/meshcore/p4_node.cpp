@@ -115,10 +115,7 @@ static void mesh_task(void* arg) {
 }
 
 void p4_node_start(void) {
-  printf("[node] mounting storage...\n");
-  if (!fs_mount_spiffs()) {
-    printf("[node] SPIFFS mount FAILED (identity will not persist)\n");
-  }
+  // Storage is mounted by app_main before radio power-up (see main.cpp).
 
   // Load or create the node identity.
   IdentityStore id_store(fs::InternalFS, "/identity");

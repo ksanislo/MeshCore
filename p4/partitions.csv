@@ -4,5 +4,8 @@ nvs,        data, nvs,      0x9000,   0x5000,
 otadata,    data, ota,      0xe000,   0x2000,
 app0,       app,  ota_0,    0x10000,  0x640000,
 app1,       app,  ota_1,    0x650000, 0x640000,
-spiffs,     data, spiffs,   0xc90000, 0x360000,
+# SPIFFS kept small: the node only stores identity/prefs/contacts, and a large
+# partition's first-boot format is slow enough to reset the board (long flash
+# erase). 1MB formats fast. (Grown later if the chat store needs more.)
+spiffs,     data, spiffs,   0xc90000, 0x100000,
 coredump,   data, coredump, 0xff0000, 0x10000,

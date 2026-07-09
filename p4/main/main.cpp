@@ -24,6 +24,7 @@
 #include "t_display_p4_config.h"
 #include "p4_radio.h"
 #include "p4_node.h"
+#include "FS.h"             // fs_mount_spiffs()
 
 // ---- Board hardware globals (external linkage; referenced by p4_radio.cpp) ----
 // IIC-1 bus (SDA7/SCL8) carries the XL9535 expander (and later touch/RTC/gauge).
@@ -100,6 +101,16 @@ extern "C" void app_main(void) {
     printf("\n=== T-Display-P4: MeshCore radio bring-up (M3.5) ===\n");
     printf("PSRAM total: %u bytes\n",
            (unsigned)heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+
+    // Mount storage FIRST, before the radio is powered — the one-time SPIFFS
+    // format is a long flash erase; doing it with the radio drawing current can
+    // brown the board out. (Idempotent from the node's perspective.)
+    printf("[main] mounting storage...\n");
+    if (!fs_mount_spiffs()) {
+        printf("[main] SPIFFS mount FAILED (identity will not persist)\n");
+    } else {
+        printf("[main] SPIFFS mounted\n");
+    }
 
     board_power_up();
     if (!board_radio_begin()) {
