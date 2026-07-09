@@ -39,8 +39,6 @@ static const rm69a10_lcd_init_cmd_t vendor_specific_init_default[] = {
     {0x12, (uint8_t[]){0x00}, 1, 0},
     {0x35, (uint8_t[]){0x00}, 1, 0},
     {0x3A, (uint8_t[]){0x75}, 1, 0}, // interface pixel format: 16bit/pixel (RGB565)
-    {0x53, (uint8_t[]){0x20}, 1, 0}, // Write CTRL Display: BCTRL=1 -> enable the
-                                     // brightness-control block (else 0x51 is ignored)
     {0x51, (uint8_t[]){0x00}, 1, 0}, // brightness = 0 (ramped up after init)
     {0x11, (uint8_t[]){0x00}, 0, 120},
     {0x29, (uint8_t[]){0x00}, 0, 0},

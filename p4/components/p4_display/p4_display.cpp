@@ -135,19 +135,16 @@ bool p4_display_init(void (*reset_pulse)(void))
             .vsync_front_porch = P4D_VFP,
         },
         .flags = {
-            // DMA2D off -> draw_bitmap copies synchronously (blocks until the
-            // pixels are in the frame buffer), so the LVGL flush can signal
-            // flush-ready inline instead of relying on the on_color_trans_done
-            // ISR (which wasn't firing -> LVGL busy-waited its buffer -> WDT).
-            .use_dma2d = false,
+            .use_dma2d = true,   // match the working LilyGo reference
         },
     };
 
     // 5) RM69A10 vendor panel (wraps the DPI panel + init table).
+    // Match the reference vendor_config exactly: only dsi_bus + dpi_config.
+    // (Setting mipi_config.lane_num here is not done by the reference.)
     rm69a10_vendor_config_t vendor_config = {};
     vendor_config.mipi_config.dsi_bus    = dsi_bus;
     vendor_config.mipi_config.dpi_config = &dpi_config;
-    vendor_config.mipi_config.lane_num   = P4D_LANES;
 
     esp_lcd_panel_dev_config_t dev_config = {
         .reset_gpio_num = -1,                       // reset is via XL9535 (caller); software reset otherwise
@@ -157,11 +154,11 @@ bool p4_display_init(void (*reset_pulse)(void))
     };
     P4D_CHECK(esp_lcd_new_panel_rm69a10(dbi_io, &dev_config, &s_panel), "esp_lcd_new_panel_rm69a10 failed");
 
-    // 6) Reset (software SWRESET), init (sends vendor table incl. sleep-out +
-    //    display-on), then explicit display-on for good measure.
-    P4D_CHECK(esp_lcd_panel_reset(s_panel), "panel reset failed");
+    // 6) Init only — sends the vendor table (incl. sleep-out 0x11 + display-on
+    //    0x29). The reference does NOT call esp_lcd_panel_reset() (a DBI SWRESET
+    //    without the required post-reset delay can corrupt the init table); the
+    //    hardware reset pulse (done above) is the panel reset.
     P4D_CHECK(esp_lcd_panel_init(s_panel), "panel init failed");
-    P4D_CHECK(esp_lcd_panel_disp_on_off(s_panel, true), "panel disp_on failed");
 
     s_inited = true;
     ESP_LOGI(TAG, "RM69A10 %dx%d up (DPI %dMHz, %d lanes @ %d Mbps)",
