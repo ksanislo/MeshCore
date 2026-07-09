@@ -46,6 +46,24 @@ our `src/` ≈ Meck's `meshcore_src` (same fork). Assemble a `p4/components/mesh
 Effort: a focused build-out (assemble + debug the core compile, then wire radio + advert). All pieces
 identified; no unknowns left. Meck-P4 clone at scratchpad/Meck-P4 is the working reference.
 
+## ★★★★★ M3.5 MESH NODE RUNS (2026-07) — identity persists, adverts on air
+The minimal MeshCore node runs on the board: real ed25519 identity
+(`d338b061...`, non-zero, **persists across reboot** via IdentityStore on the fs_shim/SPIFFS),
+mesh started, **self-advert broadcast** on 915/250/SF10. Proves the whole MeshCore software stack
+(Dispatcher, ed25519, advert-encode) + the Arduino-`<FS.h>`-over-IDF-VFS shim on P4.
+- **fs_shim component**: `fs::FS`/`File` (File derives MeshCore `Stream`) over IDF VFS + POSIX;
+  `fs_mount_spiffs()`. `P4_IDF_PLATFORM` branch in IdentityStore.h; IdentityStore.cpp un-excluded.
+- **p4_node.{h,cpp}**: `P4RNG` (esp_random), a minimal `BaseChatMesh` subclass (stub app callbacks),
+  identity load-or-create, self-advert + mesh loop on its own task. `main.cpp` mounts SPIFFS **first**
+  (before radio power-up) then attaches radio + `p4_node_start()`.
+- **meshcore build**: glob `helpers/*.cpp` minus Arduino/BLE/WiFi/I2C-RTC/CLI/UI helpers;
+  force-include `arduino_compat.h` (ltoa/random/micros everywhere); `Stream` shim gains `printf()`;
+  `random()/randomSeed()` added to arduino_compat.
+- **Gotcha fixed**: first-boot format of the 3.5MB SPIFFS partition = long flash erase that reset the
+  board mid-format (boot loop until it eventually completed). Shrunk SPIFFS to **1MB** + mount before
+  radio power-up. **Full MyMesh + MeshProxy + UITask land at M4** (this minimal node is the placeholder).
+- Still open: **SX1261-vs-SX1262 chip-ID** (max TX power); confirm silicon before shipping.
+
 ## ★★★★ M3.5 RADIO NODE PATH PROVEN (2026-07) — cpp_bus_driver, on our board
 Our own `p4/` firmware now brings up the SX1262 through **cpp_bus_driver** (NOT RadioLib) and
 runs MeshCore's `mesh::Radio` adapter — the exact stack the mesh node uses. On-device console:
