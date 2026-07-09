@@ -46,6 +46,29 @@ our `src/` ≈ Meck's `meshcore_src` (same fork). Assemble a `p4/components/mesh
 Effort: a focused build-out (assemble + debug the core compile, then wire radio + advert). All pieces
 identified; no unknowns left. Meck-P4 clone at scratchpad/Meck-P4 is the working reference.
 
+## ★★★★★★ M4a/b/c DISPLAY + LVGL + TOUCH WORK (2026-07) — the AMOLED is alive
+The RM69A10 568x1232 AMOLED renders LVGL 8.3 with working GT9895 touch on-device
+(blue UI + label + a "Touch me" button that responds). Highest-risk pillar DONE.
+`p4/components/p4_display/` (esp_lcd MIPI-DSI) + `board_hw/board_touch.h`. Hard-won lessons:
+- **Panel init order (matched to LilyGo screen_lvgl reference)**: XL9535 rails -> DPHY LDO
+  (esp_ldo ch3@1830mV) -> settle -> XL9535 SCREEN_RST pulse (via a callback into p4_display_init)
+  -> create DSI bus/DBI/DPI(RGB565,60MHz) -> `esp_lcd_new_panel_rm69a10` -> `esp_lcd_panel_init`.
+  **DO NOT call `esp_lcd_panel_reset()`** (DBI SWRESET without its post-delay corrupts the vendor
+  init table) — that was the black-screen cause. `use_dma2d=true`; don't set vendor lane_num.
+- **Pixels via `esp_lcd_panel_draw_bitmap`** (handles DMA2D + source cache write-back). Direct FB
+  writes / `get_frame_buffer` + full_refresh both failed. LVGL: double-buffered PARTIAL (2x 568x120
+  PSRAM), flush_cb = draw_bitmap, flush-ready from the DPI `on_color_trans_done` ISR, `wait_cb` yields.
+- **`CONFIG_FREERTOS_HZ=1000`** (was 100): at 100Hz `vTaskDelay(pdMS_TO_TICKS(5))` rounds to 0 ticks
+  -> LVGL task never yields -> WDT + flicker. This was the WDT/flash root cause, NOT the flush.
+- **Touch GT9895**: on IIC-1, **share XL9535's bus handle** (`set_bus_handle(XL9535_IIC_Bus->
+  get_bus_handle())`) after a TOUCH_RST pulse; `get_single_touch_point` -> scaled coords; fed to an
+  LVGL POINTER indev via `board_touch_read`. Coords align (no rotation needed).
+- **Flashing is now cable-free**: `idf.py -p /dev/ttyACM0 flash` (the CH340 port) auto-enters
+  download via DTR/RTS and auto-resets — NO manual BOOT+RESET dance. (OTG port ttyACM1 still needs
+  the manual dance; use ttyACM0.) Monitor ttyACM0 @115200 DTR/RTS de-asserted.
+- **Next M4d**: vendor full MyMesh + MeshProxy + UITask (LVGL v8) -> real GUI online. See
+  scratchpad/M4d-prep-notes.md (connectivity macro-gated; FS + UI_DISPLAY_ESP_LCD seams).
+
 ## ★★★★★ M3.5 MESH NODE RUNS (2026-07) — identity persists, adverts on air
 The minimal MeshCore node runs on the board: real ed25519 identity
 (`d338b061...`, non-zero, **persists across reboot** via IdentityStore on the fs_shim/SPIFFS),
