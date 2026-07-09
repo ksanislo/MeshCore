@@ -1,0 +1,4 @@
+## Managed component dependencies for the T-Display-P4 firmware.
+## LVGL 8.3.x is the UI toolkit for the RM69A10 display bring-up.
+dependencies:
+  lvgl/lvgl: "~8.3.0"

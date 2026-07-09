@@ -24,7 +24,12 @@
 #include "t_display_p4_config.h"
 #include "p4_radio.h"
 #include "p4_node.h"
+#include "p4_display.h"     // p4_display_init(), p4_display_selftest()
 #include "FS.h"             // fs_mount_spiffs()
+
+// Isolate the display bring-up: 1 = LVGL self-test only (no radio/node), so a
+// bad screen is unambiguously a display issue. Set 0 to run the mesh node.
+#define P4_DISPLAY_SELFTEST 1
 
 // ---- Board hardware globals (external linkage; referenced by p4_radio.cpp) ----
 // IIC-1 bus (SDA7/SCL8) carries the XL9535 expander (and later touch/RTC/gauge).
@@ -73,6 +78,17 @@ static void board_power_up(void) {
     vTaskDelay(pdMS_TO_TICKS(200));
 }
 
+// Pulse the panel hardware reset (XL9535 IO2). Passed to p4_display_init so it
+// fires in the reference order (after the DPHY LDO, before DSI/panel create).
+extern "C" void board_screen_reset_pulse(void) {
+    XL9535->pin_write(XL9535_SCREEN_RST, Cpp_Bus_Driver::Xl95x5::Value::HIGH);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    XL9535->pin_write(XL9535_SCREEN_RST, Cpp_Bus_Driver::Xl95x5::Value::LOW);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    XL9535->pin_write(XL9535_SCREEN_RST, Cpp_Bus_Driver::Xl95x5::Value::HIGH);
+    vTaskDelay(pdMS_TO_TICKS(200));
+}
+
 // ---- SX1262 reset + begin over cpp_bus_driver --------------------------------
 static bool board_radio_begin(void) {
     // DIO1 (via expander) as input; RST pulse via expander IO16.
@@ -113,16 +129,25 @@ extern "C" void app_main(void) {
     }
 
     board_power_up();
+
+#if P4_DISPLAY_SELFTEST
+    // Display-only proof. p4_display_init pulses XL9535_SCREEN_RST (via this
+    // callback) in the reference order: LDO up -> settle -> reset -> panel.
+    printf("[main] display self-test...\n");
+    if (!p4_display_init(board_screen_reset_pulse)) {
+        printf("[main] p4_display_init FAILED; halting.\n");
+        while (true) vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    p4_display_selftest();
+#else
     if (!board_radio_begin()) {
         printf("radio bring-up failed; halting.\n");
         while (true) vTaskDelay(pdMS_TO_TICKS(1000));
     }
     meck_radio_attach();
-
-    // Bring up the MeshCore node (identity + mesh + advert on its own task).
     p4_node_start();
+#endif
 
-    // app_main can idle; the mesh runs on mesh_task.
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         printf("[main] alive  heap=%u\n",

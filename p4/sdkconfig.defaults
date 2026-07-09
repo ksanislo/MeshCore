@@ -16,3 +16,6 @@ CONFIG_FATFS_LFN_HEAP=y
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# LVGL: use our vendored components/p4_display/lv_conf.h (pointed to via
+# -DLV_CONF_PATH in the top-level CMakeLists.txt) instead of Kconfig.
+CONFIG_LV_CONF_SKIP=n
