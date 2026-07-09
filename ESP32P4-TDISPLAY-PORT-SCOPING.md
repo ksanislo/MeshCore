@@ -46,6 +46,29 @@ our `src/` ≈ Meck's `meshcore_src` (same fork). Assemble a `p4/components/mesh
 Effort: a focused build-out (assemble + debug the core compile, then wire radio + advert). All pieces
 identified; no unknowns left. Meck-P4 clone at scratchpad/Meck-P4 is the working reference.
 
+## ★★★★ M3.5 RADIO NODE PATH PROVEN (2026-07) — cpp_bus_driver, on our board
+Our own `p4/` firmware now brings up the SX1262 through **cpp_bus_driver** (NOT RadioLib) and
+runs MeshCore's `mesh::Radio` adapter — the exact stack the mesh node uses. On-device console:
+```
+=== T-Display-P4: MeshCore radio bring-up (M3.5) ===
+get xl95x5 id success (id: 0) ... get sx126x id success (id: SX1261)
+sx1262 begin success
+radio_set_params() - freq=915.000 bw=250.0 sf=10 cr=4/5 sync=0x1424
+meck_radio_attach() - radio ready ... TX test frame ... TX done
+```
+Structure (all under `p4/`): `components/board_hw/` owns `t_display_p4_config.h` (shared by main +
+meshcore). `components/meshcore/P4SX1262Radio.h` = Meck's adapter (polls `get_irq_flag()`, DIO1 via
+expander is unreliable; noise-floor sampler stubbed — our pinned cpp_bus_driver lacks `get_rssi_inst`,
+and MeshCore's interference/AGC are default-off so static -120 dBm is safe). `components/meshcore/
+p4_radio.{h,cpp}` = radio_driver singleton + `meck_radio_attach`/`radio_set_params` (sync 0x1424) +
+`p4_get_radio()`; main-safe header. `main/main.cpp` DEFINES the XL9535/SX1262 globals (external
+linkage; radio glue extern-refs them), powers the rails, resets+begins the SX1262, attaches, RX/TX
+self-test. **⚠ Chip ID reads `SX1261`** (caps +15 dBm) though we configured SX1262/+22 dBm — verify
+the actual silicon variant + valid TX power before shipping. Reproduce: `source
+scratchpad/esp-idf-5.4.1/export.sh; cd p4; idf.py build; idf.py -p /dev/ttyACM1 flash;` read
+`/dev/ttyACM0` @115200 with DTR/RTS de-asserted, tap RESET. **Next:** DataStore FS shim (IDF-VFS
+`fs::FS`) → identity + advert → node on air; then M4 display.
+
 ## ★★★ RADIO WORKS (2026-07, M3) — SX1262 inits on our board
 LilyGo's `radiolib_sx1262_send_receive` example (IDF 5.4.1) prints **`sx1262 init success`** on our
 board: XL9535 expander up (id success), SPI configured (mosi3/sclk2/miso4/cs24), radio initialized.

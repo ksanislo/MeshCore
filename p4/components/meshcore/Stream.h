@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include "arduino_compat.h"
+#include <cstdarg>
 
 class Stream {
 public:
@@ -36,6 +37,17 @@ public:
     size_t println(const char* s = "") { size_t n = print(s); write('\n'); return n + 1; }
     size_t print(int v) { char b[12]; snprintf(b, sizeof(b), "%d", v); return print(b); }
     size_t println(int v) { size_t n = print(v); write('\n'); return n + 1; }
+
+    // Arduino Stream::printf (MeshCore's RegionMap et al. use it).
+    size_t printf(const char* fmt, ...) {
+        char buf[256];
+        va_list ap; va_start(ap, fmt);
+        int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+        if (n <= 0) return 0;
+        size_t len = (n < (int)sizeof(buf)) ? (size_t)n : sizeof(buf) - 1;
+        return write((const uint8_t*)buf, len);
+    }
 
     virtual ~Stream() {}
 };

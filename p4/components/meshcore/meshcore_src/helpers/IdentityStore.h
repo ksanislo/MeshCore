@@ -1,6 +1,9 @@
 #pragma once
 
-#if defined(ESP32) || defined(RP2040_PLATFORM)
+#if defined(P4_IDF_PLATFORM)
+  #include <FS.h>            // ESP-IDF VFS shim (components/fs_shim)
+  #define FILESYSTEM  fs::FS
+#elif defined(ESP32) || defined(RP2040_PLATFORM)
   #include <FS.h>
   #define FILESYSTEM  fs::FS
 #elif defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)

@@ -82,4 +82,17 @@ static inline char* ltoa(long value, char* str, int base) {
     return str;
 }
 
+// ---- Arduino random() (not provided by arduino_cpp_bus_driver) ----
+// Backed by the ESP32-P4 hardware TRNG. randomSeed is a no-op (HW RNG needs no
+// seed). Overloads, so they live in the C++-only section (C has no overloading).
+static inline long random(long howbig) {
+    if (howbig <= 0) return 0;
+    return (long)(esp_random() % (uint32_t)howbig);
+}
+static inline long random(long howsmall, long howbig) {
+    if (howsmall >= howbig) return howsmall;
+    return howsmall + random(howbig - howsmall);
+}
+static inline void randomSeed(unsigned long) { }
+
 #endif // __cplusplus

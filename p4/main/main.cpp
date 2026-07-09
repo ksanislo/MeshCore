@@ -22,8 +22,8 @@
 
 #include "cpp_bus_driver_library.h"
 #include "t_display_p4_config.h"
-#include "Dispatcher.h"     // mesh::Radio (returned by p4_get_radio)
 #include "p4_radio.h"
+#include "p4_node.h"
 
 // ---- Board hardware globals (external linkage; referenced by p4_radio.cpp) ----
 // IIC-1 bus (SDA7/SCL8) carries the XL9535 expander (and later touch/RTC/gauge).
@@ -108,30 +108,13 @@ extern "C" void app_main(void) {
     }
     meck_radio_attach();
 
-    mesh::Radio& radio = p4_get_radio();
-    uint8_t rxbuf[256];
-    uint32_t tick = 0;
+    // Bring up the MeshCore node (identity + mesh + advert on its own task).
+    p4_node_start();
+
+    // app_main can idle; the mesh runs on mesh_task.
     while (true) {
-        // Poll for RX every 10 ms.
-        int n = radio.recvRaw(rxbuf, sizeof(rxbuf));
-        if (n > 0) {
-            printf("RX %d bytes  rssi=%.0f snr=%.1f  noise=%d\n",
-                   n, (double)radio.getLastRSSI(), (double)radio.getLastSNR(),
-                   radio.getNoiseFloor());
-        }
-
-        // Every ~5 s, transmit a small test frame so a second node can hear us.
-        if (++tick >= 500) {
-            tick = 0;
-            const char* msg = "P4-hello";
-            printf("TX test frame (%u bytes)...\n", (unsigned)strlen(msg));
-            radio.startSendRaw((const uint8_t*)msg, strlen(msg));
-            uint32_t guard = 0;
-            while (!radio.isSendComplete() && guard++ < 2000) vTaskDelay(pdMS_TO_TICKS(1));
-            radio.onSendFinished();
-            printf("TX done (noise floor=%d dBm)\n", radio.getNoiseFloor());
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        printf("[main] alive  heap=%u\n",
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     }
 }
