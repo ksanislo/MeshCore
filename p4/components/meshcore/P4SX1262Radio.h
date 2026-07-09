@@ -35,6 +35,11 @@
 // linkage). We reference it here so the radio adapter can drive the chip.
 extern std::unique_ptr<Cpp_Bus_Driver::Sx126x> SX1262;
 
+// Apply LoRa modem params to the SX1262 hardware (enum-convert + config_lora_params
+// + re-arm RX). Defined in p4_radio.cpp; called from setParams() so prefs/UI radio
+// changes actually reach the chip.
+extern "C" void p4hw_apply_lora(float freq, float bw, uint8_t sf, uint8_t cr);
+
 class P4SX1262Radio : public mesh::Radio {
 public:
     P4SX1262Radio()
@@ -226,6 +231,10 @@ public:
         _currentBW = bw;
         _currentSF = sf;
         _currentCR = cr;
+        // Actually (re)configure the SX1262 — the S3 RadioLib wrapper reconfigures
+        // on setParams(), so MyMesh (and the UI's Apply Radio) expect the hardware
+        // to follow. Without this, prefs/UI changes never reach the modem.
+        p4hw_apply_lora(freq, bw, sf, cr);
     }
 
     // RadioLib-wrapper parity: the shared companion backend calls these on

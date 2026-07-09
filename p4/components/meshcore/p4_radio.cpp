@@ -29,7 +29,13 @@ extern "C" void meck_set_antenna(uint8_t external) {
                                : Cpp_Bus_Driver::Xl95x5::Value::HIGH);
 }
 
-extern "C" void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr) {
+// Configure the SX1262 modem to the given LoRa params and re-arm RX. This is
+// the ONLY place that touches config_lora_params, called from
+// P4SX1262Radio::setParams() so both the boot preset and any UI/prefs change
+// reach the chip.
+extern "C" void p4hw_apply_lora(float freq, float bw, uint8_t sf, uint8_t cr) {
+    if (!SX1262) return;
+
     Cpp_Bus_Driver::Sx126x::Lora_Bw bw_enum;
     if (bw >= 500.0f)       bw_enum = Cpp_Bus_Driver::Sx126x::Lora_Bw::BW_500000HZ;
     else if (bw >= 250.0f)  bw_enum = Cpp_Bus_Driver::Sx126x::Lora_Bw::BW_250000HZ;
@@ -53,20 +59,29 @@ extern "C" void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr) {
     uint16_t preamble = (sf <= 8) ? 32 : 16;
     uint16_t meshcore_sync_word = 0x1424;  // MeshCore
 
-    if (SX1262) {
-        SX1262->config_lora_params(
-            freq, bw_enum, 140 /*current limit mA*/, LORA_TX_POWER_DEFAULT,
-            sf_enum, cr_enum,
-            Cpp_Bus_Driver::Sx126x::Lora_Crc_Type::ON,
-            preamble, meshcore_sync_word
-        );
-    }
+    SX1262->config_lora_params(
+        freq, bw_enum, 140 /*current limit mA*/, LORA_TX_POWER_DEFAULT,
+        sf_enum, cr_enum,
+        Cpp_Bus_Driver::Sx126x::Lora_Crc_Type::ON,
+        preamble, meshcore_sync_word
+    );
+    // Re-arm continuous RX with the new config (a param change leaves standby).
+    SX1262->clear_buffer();
+    SX1262->start_lora_transmit(Cpp_Bus_Driver::Sx126x::Chip_Mode::RX);
+    SX1262->set_irq_pin_mode(
+        Cpp_Bus_Driver::Sx126x::Irq_Mask_Flag::RX_DONE,
+        Cpp_Bus_Driver::Sx126x::Irq_Mask_Flag::DISABLE,
+        Cpp_Bus_Driver::Sx126x::Irq_Mask_Flag::DISABLE);
+    SX1262->clear_irq_flag(Cpp_Bus_Driver::Sx126x::Irq_Mask_Flag::RX_DONE);
 
-    radio_driver.setParams(freq, bw, sf, cr);
-
-    printf("radio_set_params() - freq=%.3f bw=%.1f sf=%u cr=4/%u sync=0x%04X\n",
+    printf("p4hw_apply_lora - freq=%.3f bw=%.1f sf=%u cr=4/%u sync=0x%04X\n",
            (double)freq, (double)bw, (unsigned)sf, (unsigned)cr,
            (unsigned)meshcore_sync_word);
+}
+
+// The companion + meck_radio_attach call this; setParams() stores + applies.
+extern "C" void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr) {
+    radio_driver.setParams(freq, bw, sf, cr);
 }
 
 extern "C" void radio_set_tx_power(uint8_t dbm) {
