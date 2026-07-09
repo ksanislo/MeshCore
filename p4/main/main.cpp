@@ -25,6 +25,7 @@
 #include "p4_radio.h"
 #include "p4_node.h"
 #include "p4_display.h"     // p4_display_init(), p4_display_selftest()
+#include "board_touch.h"    // board_touch_init(), board_touch_read()
 #include "FS.h"             // fs_mount_spiffs()
 
 // Isolate the display bring-up: 1 = LVGL self-test only (no radio/node), so a
@@ -46,6 +47,39 @@ std::unique_ptr<Cpp_Bus_Driver::Sx126x> SX1262 =
     std::make_unique<Cpp_Bus_Driver::Sx126x>(
         SX1262_SPI_Bus, Cpp_Bus_Driver::Sx126x::Chip_Type::SX1262,
         SX1262_BUSY, SX1262_CS, DEFAULT_CPP_BUS_DRIVER_VALUE);
+
+// GT9895 capacitive touch on IIC-1 (shares the bus with XL9535). The scale
+// factors map the raw 1060x2400 grid onto the 568x1232 panel.
+auto GT9895_Bus = std::make_shared<Cpp_Bus_Driver::Hardware_Iic_1>(
+    GT9895_TOUCH_SDA, GT9895_TOUCH_SCL, I2C_NUM_0);
+std::unique_ptr<Cpp_Bus_Driver::Gt9895> GT9895 =
+    std::make_unique<Cpp_Bus_Driver::Gt9895>(
+        GT9895_Bus, GT9895_IIC_ADDRESS, GT9895_X_SCALE_FACTOR, GT9895_Y_SCALE_FACTOR,
+        DEFAULT_CPP_BUS_DRIVER_VALUE);
+
+// ---- Touch: reset + share XL9535's I2C bus handle + begin --------------------
+extern "C" void board_touch_init(void) {
+    XL9535->pin_write(XL9535_TOUCH_RST, Cpp_Bus_Driver::Xl95x5::Value::HIGH);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    XL9535->pin_write(XL9535_TOUCH_RST, Cpp_Bus_Driver::Xl95x5::Value::LOW);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    XL9535->pin_write(XL9535_TOUCH_RST, Cpp_Bus_Driver::Xl95x5::Value::HIGH);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    // GT9895 shares XL9535's already-initialised IIC-1 bus.
+    GT9895_Bus->set_bus_handle(XL9535_IIC_Bus->get_bus_handle());
+    printf("[touch] GT9895 begin %s\n", GT9895->begin() ? "success" : "FAIL");
+}
+
+extern "C" bool board_touch_read(int16_t *x, int16_t *y) {
+    if (!GT9895) return false;
+    Cpp_Bus_Driver::Gt9895::Touch_Point tp;
+    if (GT9895->get_single_touch_point(tp)) {
+        if (x) *x = (int16_t)tp.info[0].x;
+        if (y) *y = (int16_t)tp.info[0].y;
+        return true;
+    }
+    return false;
+}
 
 // ---- Power rails + peripheral reset sequence (from LilyGo's app_main) --------
 static void board_power_up(void) {
@@ -138,6 +172,7 @@ extern "C" void app_main(void) {
         printf("[main] p4_display_init FAILED; halting.\n");
         while (true) vTaskDelay(pdMS_TO_TICKS(1000));
     }
+    board_touch_init();
     p4_display_selftest();
 #else
     if (!board_radio_begin()) {

@@ -17,6 +17,7 @@
 #include "esp_cache.h"
 
 #include "t_display_p4_config.h" // RM69A10_* panel constants (board_hw)
+#include "board_touch.h"         // board_touch_read()
 #include "rm69a10_driver.h"
 
 #include "lvgl.h"
@@ -243,6 +244,32 @@ static void p4d_wait_cb(lv_disp_drv_t *drv)
     vTaskDelay(1);
 }
 
+// ---- Touch indev (GT9895 via board_touch_read) ----
+static lv_indev_drv_t s_indev_drv;
+static lv_obj_t      *s_status_label = NULL;
+
+static void p4d_touchpad_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
+{
+    (void)drv;
+    int16_t x = 0, y = 0;
+    if (board_touch_read(&x, &y)) {
+        data->state   = LV_INDEV_STATE_PR;
+        data->point.x = x;
+        data->point.y = y;
+    } else {
+        data->state = LV_INDEV_STATE_REL;
+    }
+}
+
+static void p4d_btn_event_cb(lv_event_t *e)
+{
+    (void)e;
+    static int n = 0;
+    if (s_status_label) {
+        lv_label_set_text_fmt(s_status_label, "TOUCH OK x%d", ++n);
+    }
+}
+
 static void p4d_selftest_task(void *arg)
 {
     (void)arg;
@@ -285,6 +312,12 @@ static void p4d_selftest_task(void *arg)
     // flush-ready via the DPI on_color_trans_done ISR (DMA2D copy complete).
     p4_display_register_flush_ready_cb(p4d_flush_ready_hook, &s_disp_drv);
 
+    // Touch input device (GT9895).
+    lv_indev_drv_init(&s_indev_drv);
+    s_indev_drv.type    = LV_INDEV_TYPE_POINTER;
+    s_indev_drv.read_cb = p4d_touchpad_read_cb;
+    lv_indev_drv_register(&s_indev_drv);
+
     // LVGL tick from esp_timer.
     const esp_timer_create_args_t tick_args = {
         .callback = p4d_lvgl_tick_cb,
@@ -299,11 +332,21 @@ static void p4d_selftest_task(void *arg)
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x0033AA), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
-    lv_obj_t *label = lv_label_create(scr);
-    lv_label_set_text(label, "T-Display-P4 LVGL OK");
-    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_28, LV_PART_MAIN);
-    lv_obj_center(label);
+    s_status_label = lv_label_create(scr);
+    lv_label_set_text(s_status_label, "T-Display-P4 LVGL OK");
+    lv_obj_set_style_text_color(s_status_label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_status_label, &lv_font_montserrat_28, LV_PART_MAIN);
+    lv_obj_align(s_status_label, LV_ALIGN_CENTER, 0, -80);
+
+    // Touch proof: a button that updates the label when tapped.
+    lv_obj_t *btn = lv_btn_create(scr);
+    lv_obj_set_size(btn, 240, 90);
+    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 40);
+    lv_obj_add_event_cb(btn, p4d_btn_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *btnlbl = lv_label_create(btn);
+    lv_label_set_text(btnlbl, "Touch me");
+    lv_obj_set_style_text_font(btnlbl, &lv_font_montserrat_28, LV_PART_MAIN);
+    lv_obj_center(btnlbl);
 
     p4_display_set_brightness(255);
 
