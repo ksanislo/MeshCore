@@ -270,33 +270,28 @@ static void p4d_btn_event_cb(lv_event_t *e)
     }
 }
 
-static void p4d_selftest_task(void *arg)
+// Bring up LVGL 8.3 over the (proven) panel: double-buffered partial render in
+// PSRAM (DMA2D flush + on_color_trans_done flush-ready), the GT9895 touch indev,
+// and the tick timer. Returns the registered display (NULL on failure). The
+// panel itself must already be up (p4_display_init done by main). Shared by the
+// self-test AND by UITask on the P4 (the esp_lcd display backend).
+extern "C" lv_disp_t *p4_display_lvgl_begin(void)
 {
-    (void)arg;
-
-    // Panel already inited by main (with the reset callback); idempotent.
     if (!p4_display_init(NULL)) {
-        ESP_LOGE(TAG, "selftest: panel init failed");
-        vTaskDelete(NULL);
-        return;
+        ESP_LOGE(TAG, "lvgl_begin: panel not inited");
+        return NULL;
     }
-
-    // ---- LVGL 8.3 over the (now-proven) panel, reference pattern ----
     lv_init();
 
-    // Double-buffered partial render (1/10 screen each) in PSRAM: LVGL renders
-    // one buffer while the other DMA2D-flushes, so it never stalls on a full
-    // frame. flush_cb DMA2D-copies each area into the scanned frame buffer.
-    const int DRAW_LINES = 120;
+    const int DRAW_LINES = 120;   // ~1/10 screen per partial buffer
     size_t buf_px = (size_t)P4D_WIDTH * DRAW_LINES;
     lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
     lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
     if (!buf1 || !buf2) {
-        ESP_LOGE(TAG, "selftest: draw buffer alloc failed");
-        vTaskDelete(NULL);
-        return;
+        ESP_LOGE(TAG, "lvgl_begin: draw buffer alloc failed");
+        return NULL;
     }
     lv_disp_draw_buf_init(&s_draw_buf, buf1, buf2, buf_px);
 
@@ -312,7 +307,7 @@ static void p4d_selftest_task(void *arg)
     // flush-ready via the DPI on_color_trans_done ISR (DMA2D copy complete).
     p4_display_register_flush_ready_cb(p4d_flush_ready_hook, &s_disp_drv);
 
-    // Touch input device (GT9895).
+    // Touch input device (GT9895 via board_touch_read).
     lv_indev_drv_init(&s_indev_drv);
     s_indev_drv.type    = LV_INDEV_TYPE_POINTER;
     s_indev_drv.read_cb = p4d_touchpad_read_cb;
@@ -326,6 +321,21 @@ static void p4d_selftest_task(void *arg)
     esp_timer_handle_t tick_timer = NULL;
     esp_timer_create(&tick_args, &tick_timer);
     esp_timer_start_periodic(tick_timer, P4D_LVGL_TICK_MS * 1000);
+
+    p4_display_set_brightness(255);
+    return disp;
+}
+
+static void p4d_selftest_task(void *arg)
+{
+    (void)arg;
+
+    lv_disp_t *disp = p4_display_lvgl_begin();
+    if (!disp) {
+        ESP_LOGE(TAG, "selftest: lvgl_begin failed");
+        vTaskDelete(NULL);
+        return;
+    }
 
     // Proof UI: blue background + centered label.
     lv_obj_t *scr = lv_disp_get_scr_act(disp);

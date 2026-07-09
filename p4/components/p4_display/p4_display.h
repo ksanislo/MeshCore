@@ -63,6 +63,18 @@ esp_lcd_panel_handle_t p4_display_panel(void);
 void p4_display_register_flush_ready_cb(bool (*cb)(void *), void *ctx);
 
 /**
+ * @brief Bring up LVGL 8.3 on the panel and return the registered display.
+ *
+ * Double-buffered partial render in PSRAM, DMA2D flush + on_color_trans_done
+ * flush-ready, the GT9895 touch pointer indev, and the 1 ms tick. The panel must
+ * already be up (p4_display_init()). Shared by the self-test and by UITask (the
+ * P4 esp_lcd display backend). Returns the lv_disp_t* (NULL on failure).
+ * Forward-declared so non-LVGL callers (main.cpp) need not include lvgl.h.
+ */
+struct _lv_disp_t;
+struct _lv_disp_t *p4_display_lvgl_begin(void);
+
+/**
  * @brief On-device proof: init LVGL 8.3, wire flush/tick, draw a full-screen
  *        colored background + centered label, ramp brightness to max, and spin
  *        an LVGL task. Calls p4_display_init() first if not already done.
