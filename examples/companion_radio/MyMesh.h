@@ -15,7 +15,10 @@
 #define FIRMWARE_VERSION "v1.16.0"
 #endif
 
-#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+#if defined(P4_IDF_PLATFORM)
+#include <FS.h>            // ESP-IDF VFS shim (components/fs_shim); no SPIFFS.h on pure IDF
+#define FILESYSTEM fs::FS
+#elif defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
 #include <InternalFileSystem.h>
 #elif defined(RP2040_PLATFORM)
 #include <LittleFS.h>

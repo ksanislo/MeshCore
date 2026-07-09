@@ -2703,7 +2703,13 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SET_AUTOADD_CONFIG) {
     _prefs.autoadd_config = cmd_frame[1];
     if (len >= 3) {
+#if defined(P4_IDF_PLATFORM)
+      // P4/IDF has no Arduino min() macro (defining one would clobber std::min in
+      // force-included STL headers); inline the clamp -- behaviour-identical.
+      _prefs.autoadd_max_hops = (cmd_frame[2] < (uint8_t)64) ? cmd_frame[2] : (uint8_t)64;
+#else
       _prefs.autoadd_max_hops = min(cmd_frame[2], (uint8_t)64);
+#endif
     }
     savePrefs();
     writeOKFrame();
@@ -2756,6 +2762,10 @@ void MyMesh::enterCLIRescue() {
 }
 
 void MyMesh::checkCLIRescueCmd() {
+#if !defined(P4_IDF_PLATFORM)
+  // CLI rescue reads raw bytes from USB Serial and lists directories -- the P4/IDF
+  // Serial + fs_shim don't expose available()/read()/openNextFile()/isDirectory().
+  // Never reached on P4 (nothing calls enterCLIRescue()). Re-enable at M5 if wanted.
   int len = strlen(cli_command);
   while (Serial.available() && len < sizeof(cli_command)-1) {
     char c = Serial.read();
@@ -2925,6 +2935,7 @@ void MyMesh::checkCLIRescueCmd() {
 
     cli_command[0] = 0;  // reset command buffer
   }
+#endif  // !P4_IDF_PLATFORM
 }
 
 void MyMesh::checkSerialInterface() {

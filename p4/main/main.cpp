@@ -32,6 +32,14 @@
 // bad screen is unambiguously a display issue. Set 0 to run the mesh node.
 #define P4_DISPLAY_SELFTEST 1
 
+// M4d: the shared companion BACKEND (MyMesh + DataStore + MeshProxy) is compiled
+// + linked but not yet driven (UITask lands later). p4_backend_smoke() is defined
+// in the companion component; referencing it here (behind a volatile guard so the
+// call is never elided AND never actually runs) forces the backend objects into
+// the final link so undefined references surface at build time. Leave at 0.
+extern "C" void p4_backend_smoke(void);
+static volatile bool s_run_backend_smoke = false;
+
 // ---- Board hardware globals (external linkage; referenced by p4_radio.cpp) ----
 // IIC-1 bus (SDA7/SCL8) carries the XL9535 expander (and later touch/RTC/gauge).
 auto XL9535_IIC_Bus = std::make_shared<Cpp_Bus_Driver::Hardware_Iic_1>(
@@ -148,6 +156,9 @@ static bool board_radio_begin(void) {
 }
 
 extern "C" void app_main(void) {
+    // Never true — forces the companion backend into the link (see declaration above).
+    if (s_run_backend_smoke) p4_backend_smoke();
+
     printf("\n=== T-Display-P4: MeshCore radio bring-up (M3.5) ===\n");
     printf("PSRAM total: %u bytes\n",
            (unsigned)heap_caps_get_total_size(MALLOC_CAP_SPIRAM));

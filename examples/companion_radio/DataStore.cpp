@@ -97,7 +97,10 @@ void DataStore::begin() {
 #endif
 }
 
-#if defined(ESP32)
+#if defined(P4_IDF_PLATFORM)
+  #include <FS.h>          // fs::SPIFFS (fs_shim); nvs already inited by the node
+  #include <nvs_flash.h>
+#elif defined(ESP32)
   #include <SPIFFS.h>
   #include <nvs_flash.h>
 #elif defined(RP2040_PLATFORM)
@@ -135,7 +138,9 @@ lfs_ssize_t _getLfsUsedBlockCount(FILESYSTEM* fs) {
 #endif
 
 uint32_t DataStore::getStorageUsedKb() const {
-#if defined(ESP32)
+#if defined(P4_IDF_PLATFORM)
+  return fs::SPIFFS.usedBytes() / 1024;
+#elif defined(ESP32)
   return SPIFFS.usedBytes() / 1024;
 #elif defined(RP2040_PLATFORM)
   FSInfo info;
@@ -153,7 +158,9 @@ uint32_t DataStore::getStorageUsedKb() const {
 }
 
 uint32_t DataStore::getStorageTotalKb() const {
-#if defined(ESP32)
+#if defined(P4_IDF_PLATFORM)
+  return fs::SPIFFS.totalBytes() / 1024;
+#elif defined(ESP32)
   return SPIFFS.totalBytes() / 1024;
 #elif defined(RP2040_PLATFORM)
   FSInfo info;
@@ -210,6 +217,10 @@ bool DataStore::formatFileSystem() {
   }
 #elif defined(RP2040_PLATFORM)
   return LittleFS.format();
+#elif defined(P4_IDF_PLATFORM)
+  bool fs_success = _fs->format();             // fs_shim FS::format() (esp_spiffs_format)
+  esp_err_t nvs_err = nvs_flash_erase();       // no reinit needed; reboot re-inits
+  return fs_success && (nvs_err == ESP_OK);
 #elif defined(ESP32)
   bool fs_success = ((fs::SPIFFSFS *)_fs)->format();
   esp_err_t nvs_err = nvs_flash_erase(); // no need to reinit, will be done by reboot

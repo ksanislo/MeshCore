@@ -216,6 +216,9 @@ public:
     // ---- Additional accessors for stats ----
     uint32_t getPacketsRecv() const { return _pktRecv; }
     uint32_t getPacketsSent() const { return _pktSent; }
+    // RadioLib-wrapper parity for the companion node-stats screen. CRC/receive
+    // error accounting isn't tracked separately yet (M6 diagnostics); return 0.
+    uint32_t getPacketsRecvErrors() const { return 0; }
 
     // ---- Radio parameter storage (set by radio_set_params) ----
     void setParams(float freq, float bw, uint8_t sf, uint8_t cr) {
@@ -224,6 +227,12 @@ public:
         _currentSF = sf;
         _currentCR = cr;
     }
+
+    // RadioLib-wrapper parity: the shared companion backend calls these on
+    // `radio_driver`. TX power is applied by config_lora_params on the next
+    // radio_set_params(); boosted-gain isn't exposed by our pinned cpp_bus_driver.
+    void setTxPower(int8_t dbm) { _txPower = dbm; }
+    void setRxBoostedGainMode(uint8_t on) { _rxBoosted = on; }
 
 private:
     bool _inReceiveMode;
@@ -236,6 +245,8 @@ private:
     float _currentBW;
     uint8_t _currentSF;
     uint8_t _currentCR;
+    int8_t  _txPower = 22;      // stored; applied via config_lora_params on setParams()
+    uint8_t _rxBoosted = 0;     // stored; boosted-gain toggle not exposed by cpp_bus_driver
 
     int      _noiseFloor;
     uint64_t _lastFloorSampleUs;

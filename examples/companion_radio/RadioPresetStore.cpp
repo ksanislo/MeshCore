@@ -6,7 +6,10 @@
 // Other platforms (nRF52 / STM32 use Adafruit_LittleFS, a different File API, and
 // have no WiFi preset-update path) compile portable stubs that always fall back to
 // the compiled-in seed table.
-#if defined(ESP32)
+#if defined(P4_IDF_PLATFORM)
+  #include <FS.h>                 // fs_shim: fs::SPIFFS exposes the Arduino fs::FS API
+  #define PRESET_FS fs::SPIFFS
+#elif defined(ESP32)
   #include <SPIFFS.h>
   #define PRESET_FS SPIFFS
 #elif defined(RP2040_PLATFORM)

@@ -12,7 +12,10 @@
 #include <stdio.h>
 
 // ---- MeshCore radio adapter instance ----
-static P4SX1262Radio radio_driver;
+// Global (not static): the shared companion backend refers to it by the name
+// `radio_driver` (declared extern in the companion component's target.h), the
+// same way the S3 variants expose their RadioLib wrapper.
+P4SX1262Radio radio_driver;
 
 mesh::Radio& p4_get_radio() { return radio_driver; }
 
@@ -74,6 +77,27 @@ extern "C" void radio_set_tx_power(uint8_t dbm) {
 
 extern "C" uint32_t radio_get_rng_seed(void) {
     return esp_random();
+}
+
+// ---- C++-linkage radio controls for the companion backend (MeshProxy) --------
+// The companion's MeshProxy calls plain C++-linkage radio_set_params /
+// radio_set_tx_power(int8_t) / radio_sleep / radio_standby (defined in the
+// companion component's p4_target.cpp). These extern-C shims let that C++ side
+// forward into the hardware code here without the two linkages colliding.
+extern "C" void p4hw_set_params(float freq, float bw, uint8_t sf, uint8_t cr) {
+    radio_set_params(freq, bw, sf, cr);
+}
+extern "C" void p4hw_set_tx_power(uint8_t dbm) {
+    radio_set_tx_power(dbm);
+}
+extern "C" void p4hw_radio_standby(void) {
+    // Re-arm continuous RX (the modem config is re-applied by radio_set_params).
+    if (SX1262) SX1262->start_lora_transmit(Cpp_Bus_Driver::Sx126x::Chip_Mode::RX);
+}
+extern "C" void p4hw_radio_sleep(void) {
+    // Radio kill-switch OFF path. A true SX1262 sleep is deferred to M5/M6; for
+    // now leave the chip in its current (RX) state — the backend also gates the
+    // mesh loop when radio_off is set, so no TX/RX is initiated.
 }
 
 extern "C" bool meck_radio_attach(void) {

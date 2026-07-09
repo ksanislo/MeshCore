@@ -96,3 +96,14 @@ static inline long random(long howsmall, long howbig) {
 static inline void randomSeed(unsigned long) { }
 
 #endif // __cplusplus
+
+// ---- Arduino constrain() ----
+// Not provided by the arduino_cpp_bus_driver <Arduino.h>. Safe to define globally
+// (not an STL name). min()/max() are deliberately NOT defined here -- as macros
+// they would clobber std::min/std::max in any STL header and this file is
+// force-included into every meshcore TU. The companion component, whose vendored
+// Arduino-style sources expect them (and already coexist with them on S3), gets
+// min/max from its own force-included companion_compat.h instead.
+#ifndef constrain
+#define constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
+#endif
