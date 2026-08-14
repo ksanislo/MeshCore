@@ -1,5 +1,35 @@
 # Scoping: porting the LVGL companion to LilyGo T-Display P4 (ESP32-P4)
 
+> ## ⚠️ STATUS 2026-08: ATTEMPTED, GOT FAR, NOW SHELVED
+>
+> The rest of this file is the **2026-06 feasibility text and is out of date** — it says "no code,
+> no hardware." Both changed: the hardware was bought and the port was built. It is **shelved**,
+> not cancelled — this board has real hardware problems, and focus has returned to the CrowPanel
+> (plus T-Deck) as the core supported targets.
+>
+> **All P4 code lives on the `esp32p4` branch (pushed to origin), NOT on `dev`.** `dev` has no
+> `p4/` directory. The branch's own copy of this doc carries the detailed, up-to-date milestone
+> log — read that one, not this file, if you resume.
+>
+> **How far it got** (a dedicated pure-IDF `p4/` project, not a PlatformIO variant — pure Arduino
+> will not boot this board's HEX-mode 32MB PSRAM):
+> - Boots on-device, IDF 5.4.1, 32MB PSRAM @200MHz
+> - SX1262 radio up; mesh node runs, identity persists, adverts on air
+> - RM69A10 568×1232 AMOLED over MIPI-DSI + LVGL 8.3 + GT9895 touch, all working
+> - **The full MeshCore LVGL companion GUI runs** — real `UITask`/`MeshProxy`/`MyMesh`, mesh
+>   backend on core 0, UI on core 1, ~187 KB internal heap free. The port's core goal was reached.
+>
+> **What was never finished:** RX is deaf — the node transmits but does not reliably hear peers
+> (see the WIP commit at the branch tip for the two candidate causes and the `[radiodiag]`
+> instrumentation that discriminates between them). WiFi/BLE via the C6 co-processor (M5) and the
+> remaining peripherals — fuel gauge, GPS, RTC, SDMMC (M6) — were never started. SD, emoji, and
+> map are stubbed.
+>
+> **If you resume:** `git checkout esp32p4`, read that branch's version of this doc plus the WIP
+> commit message at the tip. Nothing here needs re-deriving; the hard-won bring-up details
+> (DSI panel init order, the `esp_lcd_panel_reset()` trap, `CONFIG_FREERTOS_HZ=1000`) are all
+> written down there.
+
 Status: **feasibility only — no code, no hardware in hand.** Written 2026-06.
 Verdict up front: **feasible but it's a platform port, not a variant add.** Two of the three
 pillars our UI rests on (LovyanGFX display, native BLE/WiFi radio) do not exist on ESP32-P4 and
