@@ -210,16 +210,51 @@ void p4_display_register_flush_ready_cb(bool (*cb)(void *), void *ctx)
 #define P4D_LVGL_TICK_MS   1
 #define P4D_DRAW_LINES     120   // partial-render buffer height (~1/10 screen)
 
+// UI zoom. The RM69A10 is a small, very high-DPI 568x1232 panel, so a UI laid
+// out in native pixels renders uncomfortably tiny. We run LVGL at HALF the
+// physical resolution (P4D_LOG_WIDTH x P4D_LOG_HEIGHT) and nearest-neighbour
+// upscale each flushed region P4D_UI_SCALE x on the way to the panel. UITask
+// derives its whole layout + font/metrics tier from lv_disp_get_hor_res(), so
+// this makes every element (fonts, avatars, spacing, images) render 2x wider
+// and 2x taller — 4x area — with no widget-code changes.
+#define P4D_UI_SCALE       2
+#define P4D_LOG_WIDTH      (P4D_WIDTH  / P4D_UI_SCALE)   // 284
+#define P4D_LOG_HEIGHT     (P4D_HEIGHT / P4D_UI_SCALE)   // 616
+
 static lv_disp_drv_t      s_disp_drv;
 static lv_disp_draw_buf_t s_draw_buf;
+// Physical-resolution scratch for the 2x upscale (PSRAM, DMA-capable). Sized
+// for the largest upscaled partial region (= draw-buffer px * scale^2). Reused
+// per flush: LVGL serialises flush_cb behind flush_ready, so the previous DMA
+// has completed before the next upscale overwrites this.
+static lv_color_t        *s_scale_buf = NULL;
 
 static void p4d_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
 {
     esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)drv->user_data;
-    // DMA2D copies the LVGL buffer into the scanned frame buffer (handles the
-    // source cache write-back). flush_ready is signalled from the DPI
-    // on_color_trans_done ISR when the copy completes (reference pattern).
-    esp_lcd_panel_draw_bitmap(panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, color_p);
+
+    // Nearest-neighbour 2x upscale: each logical pixel -> a 2x2 physical block.
+    const int lw = area->x2 - area->x1 + 1;   // logical width of this region
+    const int lh = area->y2 - area->y1 + 1;   // logical height
+    const int pw = lw * P4D_UI_SCALE;          // physical (upscaled) row stride
+    lv_color_t *dst = s_scale_buf;
+    for (int y = 0; y < lh; y++) {
+        const lv_color_t *srow = color_p + (size_t)y * lw;
+        lv_color_t *d0 = dst + (size_t)(y * P4D_UI_SCALE) * pw;
+        lv_color_t *d1 = d0 + pw;
+        for (int x = 0; x < lw; x++) {
+            lv_color_t c = srow[x];
+            int px = x * P4D_UI_SCALE;
+            d0[px] = c; d0[px + 1] = c;
+            d1[px] = c; d1[px + 1] = c;
+        }
+    }
+    // DMA2D copies the upscaled buffer into the scanned frame buffer; flush_ready
+    // is signalled from the DPI on_color_trans_done ISR when the copy completes.
+    esp_lcd_panel_draw_bitmap(panel,
+                              area->x1 * P4D_UI_SCALE, area->y1 * P4D_UI_SCALE,
+                              (area->x2 + 1) * P4D_UI_SCALE, (area->y2 + 1) * P4D_UI_SCALE,
+                              dst);
 }
 
 static bool p4d_flush_ready_hook(void *ctx)
@@ -254,8 +289,9 @@ static void p4d_touchpad_read_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
     int16_t x = 0, y = 0;
     if (board_touch_read(&x, &y)) {
         data->state   = LV_INDEV_STATE_PR;
-        data->point.x = x;
-        data->point.y = y;
+        // GT9895 reports physical pixels; LVGL runs at 1/P4D_UI_SCALE res.
+        data->point.x = x / P4D_UI_SCALE;
+        data->point.y = y / P4D_UI_SCALE;
     } else {
         data->state = LV_INDEV_STATE_REL;
     }
@@ -283,21 +319,26 @@ extern "C" lv_disp_t *p4_display_lvgl_begin(void)
     }
     lv_init();
 
-    const int DRAW_LINES = 120;   // ~1/10 screen per partial buffer
-    size_t buf_px = (size_t)P4D_WIDTH * DRAW_LINES;
+    // LVGL renders at LOGICAL resolution; the flush upscales P4D_UI_SCALE x.
+    const int DRAW_LINES = 120;   // logical partial-buffer height
+    size_t buf_px = (size_t)P4D_LOG_WIDTH * DRAW_LINES;
     lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
     lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(buf_px * sizeof(lv_color_t),
                                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
-    if (!buf1 || !buf2) {
+    // Upscale scratch holds any logical region blown up scale^2 (physical px).
+    s_scale_buf = (lv_color_t *)heap_caps_malloc(
+        buf_px * (P4D_UI_SCALE * P4D_UI_SCALE) * sizeof(lv_color_t),
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
+    if (!buf1 || !buf2 || !s_scale_buf) {
         ESP_LOGE(TAG, "lvgl_begin: draw buffer alloc failed");
         return NULL;
     }
     lv_disp_draw_buf_init(&s_draw_buf, buf1, buf2, buf_px);
 
     lv_disp_drv_init(&s_disp_drv);
-    s_disp_drv.hor_res   = P4D_WIDTH;
-    s_disp_drv.ver_res   = P4D_HEIGHT;
+    s_disp_drv.hor_res   = P4D_LOG_WIDTH;
+    s_disp_drv.ver_res   = P4D_LOG_HEIGHT;
     s_disp_drv.flush_cb  = p4d_lvgl_flush_cb;
     s_disp_drv.draw_buf  = &s_draw_buf;
     s_disp_drv.wait_cb   = p4d_wait_cb;   // yield (not busy-spin) while flushing

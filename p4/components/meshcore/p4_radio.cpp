@@ -9,6 +9,8 @@
 #include "P4SX1262Radio.h"          // pulls in the extern SX1262 + cpp_bus_driver
 #include "t_display_p4_config.h"
 #include "esp_random.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 
 // ---- MeshCore radio adapter instance ----
@@ -59,12 +61,35 @@ extern "C" void p4hw_apply_lora(float freq, float bw, uint8_t sf, uint8_t cr) {
     uint16_t preamble = (sf <= 8) ? 32 : 16;
     uint16_t meshcore_sync_word = 0x1424;  // MeshCore
 
-    SX1262->config_lora_params(
-        freq, bw_enum, 140 /*current limit mA*/, LORA_TX_POWER_DEFAULT,
-        sf_enum, cr_enum,
-        Cpp_Bus_Driver::Sx126x::Lora_Crc_Type::ON,
-        preamble, meshcore_sync_word
-    );
+    // Configure + CALIBRATION-VERIFY. The SX1262's cold-boot calibration is
+    // occasionally bad (the PLL/image cal fails against a not-yet-settled TCXO),
+    // which locks the synth off-frequency and leaves RX stone deaf — the
+    // intermittent "some boots hear, some don't" symptom. config_lora_params
+    // runs Calibrate(0x7F) + CalibrateImage internally; afterward we read
+    // GetDeviceErrors and, if any RF-critical block failed, clear + redo.
+    // Bit map of the blocks that matter for RX: PLL(2) ADC(3) IMG(4) XOSC(5)
+    // PLL_LOCK(6) -> mask 0x007C.
+    const uint16_t RF_CAL_ERR_MASK = 0x007C;
+    bool cfg_ok = false;
+    uint16_t dev_err = 0;
+    int attempt = 0;
+    for (; attempt < 5; attempt++) {
+        SX1262->clear_device_errors();
+        cfg_ok = SX1262->config_lora_params(
+            freq, bw_enum, 140 /*current limit mA*/, LORA_TX_POWER_DEFAULT,
+            sf_enum, cr_enum,
+            Cpp_Bus_Driver::Sx126x::Lora_Crc_Type::ON,
+            preamble, meshcore_sync_word
+        );
+        dev_err = SX1262->get_device_errors();
+        if (cfg_ok && (dev_err & RF_CAL_ERR_MASK) == 0) break;
+        printf("p4hw_apply_lora - CAL RETRY %d: cfg=%s device_errors=0x%03X\n",
+               attempt, cfg_ok ? "OK" : "FAIL", (unsigned)dev_err);
+        vTaskDelay(pdMS_TO_TICKS(12));   // let the TCXO settle further, then redo
+    }
+    SX1262->clear_device_errors();
+    printf("p4hw_apply_lora - config %s after %d attempt(s), device_errors=0x%03X\n",
+           cfg_ok ? "OK" : "FAIL", attempt + 1, (unsigned)dev_err);
     // Re-arm continuous RX with the new config (a param change leaves standby).
     SX1262->clear_buffer();
     SX1262->start_lora_transmit(Cpp_Bus_Driver::Sx126x::Chip_Mode::RX);

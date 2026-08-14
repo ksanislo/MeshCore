@@ -39,6 +39,8 @@ extern std::unique_ptr<Cpp_Bus_Driver::Sx126x> SX1262;
 // + re-arm RX). Defined in p4_radio.cpp; called from setParams() so prefs/UI radio
 // changes actually reach the chip.
 extern "C" void p4hw_apply_lora(float freq, float bw, uint8_t sf, uint8_t cr);
+// SKY13453 RF-switch select: 0 = Internal (RF1, VCTL HIGH), 1 = External (RF2, LOW).
+extern "C" void meck_set_antenna(uint8_t external);
 
 class P4SX1262Radio : public mesh::Radio {
 public:
@@ -65,11 +67,30 @@ public:
     }
 
     int recvRaw(uint8_t* bytes, int sz) override {
-        // Periodic noise-floor sample, riding the recvRaw() cadence (~2 s).
+        // Periodic radio diagnostic (~2 s): dump the chip's actual mode + pending
+        // IRQs so we can see whether it's really in RX and whether it ever flags
+        // anything. SX126x status byte: bits[6:4] chip mode (0x2=STBY_RC,
+        // 0x3=STBY_XOSC, 0x4=FS, 0x5=RX, 0x6=TX), bits[3:1] cmd status.
+        // Sample RSSI on EVERY poll (~1 ms) and hold the 2 s peak, so a relay's
+        // ~100 ms TX burst can't slip between prints. If the peak never rises
+        // above the ~-112 dBm floor with a nearby relay -> wrong frequency /
+        // passband. If it spikes -> RF is in, problem is downstream (demod/latch).
+        static int8_t s_rssiPeak = -128;
+        if (_inReceiveMode) {
+            int8_t r = SX1262->get_rssi_inst();
+            if (r != 0 && r > s_rssiPeak) s_rssiPeak = r;
+        }
         uint64_t now_us = esp_timer_get_time();
         if (now_us - _lastFloorSampleUs >= 2000000ULL) {
             _lastFloorSampleUs = now_us;
-            sampleNoiseFloor();
+            uint8_t  st  = SX1262->get_status();
+            uint16_t irq = SX1262->get_irq_flag();
+            uint16_t devErr = SX1262->get_device_errors();
+            printf("[radiodiag] status=0x%02X (mode=%u) irq=0x%04X devErr=0x%03X rssiPeak(2s)=%ddBm rx=%lu tx=%lu inRx=%d\n",
+                   st, (unsigned)((st >> 4) & 0x7), irq, devErr,
+                   (int)s_rssiPeak, (unsigned long)_pktRecv, (unsigned long)_pktSent,
+                   (int)_inReceiveMode);
+            s_rssiPeak = -128;
         }
 
         if (!_inReceiveMode) return 0;
@@ -169,6 +190,7 @@ public:
         SX1262->send_data(const_cast<uint8_t*>(bytes), len);
 
         _pktSent++;
+        printf("[radiotx] START len=%d (inRx->false)\n", len);
         return true;
     }
 
@@ -186,6 +208,7 @@ public:
         SX1262->clear_irq_flag(Cpp_Bus_Driver::Sx126x::Irq_Mask_Flag::TX_DONE);
         resetToRx();
         _inReceiveMode = true;
+        printf("[radiotx] FINISHED (re-armed RX, inRx->true)\n");
     }
 
     bool isInRecvMode() const override {

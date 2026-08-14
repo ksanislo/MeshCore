@@ -68,13 +68,26 @@ namespace Cpp_Bus_Driver
             assert_log(Log_Level::CHIP, __FILE__, __LINE__, "set_dio3_as_tcxo_ctrl fail\n");
         }
 
+        // SX1262 datasheet 9.2.1: after enabling the TCXO on DIO3, ALL blocks
+        // must be recalibrated against the new reference. RadioLib and the newer
+        // cpp_bus_driver do this in begin(); the pinned version omitted it, which
+        // leaves the image/PLL calibration stale -> the synth sits slightly off
+        // frequency -> terrible RX sensitivity (only the strongest packets decode).
+        delay_ms(10);   // let the TCXO settle before recalibrating
+        if (calibrate(0b01111111) == false)
+        {
+            assert_log(Log_Level::CHIP, __FILE__, __LINE__, "post-TCXO calibrate fail\n");
+        }
+        delay_ms(5);
+
         // 设置电源调节器模式
         if (set_regulator_mode(Regulator_Mode::LDO_AND_DCDC) == false)
         {
             assert_log(Log_Level::CHIP, __FILE__, __LINE__, "set_regulator_mode fail\n");
         }
 
-        // 设置DIO2的模式功能为控制RF开关
+        // 设置DIO2的模式功能为控制RF开关 (RadioLib enables this by default on
+        // this board and works, so keep it).
         if (set_dio2_as_rf_switch_ctrl(Dio2_Mode::RF_SWITCH) == false)
         {
             assert_log(Log_Level::CHIP, __FILE__, __LINE__, "set_dio2_as_rf_switch_ctrl fail\n");
@@ -151,6 +164,36 @@ namespace Cpp_Bus_Driver
         }
 
         return buffer;
+    }
+
+    int8_t Sx126x::get_rssi_inst(void)
+    {
+        uint8_t buffer[2] = {0};   // [status, rssi_inst]
+        check_busy();
+        if (_bus->read(static_cast<uint8_t>(0x15) /*GetRssiInst*/, buffer, 2) == false)
+        {
+            return 0;
+        }
+        // RSSI[dBm] = -RssiInst/2
+        return static_cast<int8_t>(-(static_cast<int>(buffer[1]) / 2));
+    }
+
+    uint16_t Sx126x::get_device_errors(void)
+    {
+        uint8_t buffer[3] = {0};   // [status, OpError(15:8), OpError(7:0)]
+        check_busy();
+        if (_bus->read(static_cast<uint8_t>(0x17) /*GetDeviceErrors*/, buffer, 3) == false)
+        {
+            return 0;
+        }
+        return static_cast<uint16_t>((static_cast<uint16_t>(buffer[1]) << 8) | buffer[2]);
+    }
+
+    bool Sx126x::clear_device_errors(void)
+    {
+        uint8_t buffer[2] = {0, 0};   // ClearDeviceErrors takes 2 (RFU) bytes
+        check_busy();
+        return _bus->write(static_cast<uint8_t>(0x07) /*ClearDeviceErrors*/, buffer, 2);
     }
 
     Sx126x::Cmd_Status Sx126x::parse_cmd_status(uint8_t parse_status)

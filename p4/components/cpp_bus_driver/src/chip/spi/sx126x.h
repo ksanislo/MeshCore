@@ -359,6 +359,18 @@ namespace Cpp_Bus_Driver
          */
         uint8_t get_status(void);
 
+        // Instantaneous RSSI (GetRssiInst, 0x15), valid in RX. Returns dBm
+        // (negative); 0 on read failure. Diagnostic: is any RF reaching the demod?
+        int8_t get_rssi_inst(void);
+
+        // Device operational-error flags (GetDeviceErrors, 0x17). Bit map:
+        //  0 RC64K_CALIB  1 RC13M_CALIB  2 PLL_CALIB  3 ADC_CALIB  4 IMG_CALIB
+        //  5 XOSC_START   6 PLL_LOCK     8 PA_RAMP. Non-zero after Calibrate =
+        //  a failed calibration -> deaf/off-frequency radio.
+        uint16_t get_device_errors(void);
+        // Clear all device-error flags (ClearDeviceErrors, 0x07).
+        bool clear_device_errors(void);
+
         /**
          * @brief 命令解析，详细请参考SX126x手册 13-76: Status Bytes Definition
          * @param parse_status 解析状态语句，由get_status()函数获取

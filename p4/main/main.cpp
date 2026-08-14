@@ -90,12 +90,36 @@ extern "C" void board_touch_init(void) {
     printf("[touch] GT9895 begin %s\n", GT9895->begin() ? "success" : "FAIL");
 }
 
+// GT9895 edge calibration. The sensor's reported coordinates don't reach the
+// panel edges (measured reachable range ~[20,525] x, ~[6,1218] y out of
+// 568x1232), so the outer band — notably the bottom-right Settings tab — is
+// unreachable. Stretch the sensed range onto the full panel: the furthest point
+// the sensor can feel at each edge maps to the true edge. Conservative extremes
+// (inside the measured max) guarantee the edges are reachable; tune if needed.
+#define TOUCH_X_MIN 20
+#define TOUCH_X_MAX 525
+#define TOUCH_Y_MIN 6
+#define TOUCH_Y_MAX 1218
+
 extern "C" bool board_touch_read(int16_t *x, int16_t *y) {
     if (!GT9895) return false;
     Cpp_Bus_Driver::Gt9895::Touch_Point tp;
     if (GT9895->get_single_touch_point(tp)) {
-        if (x) *x = (int16_t)tp.info[0].x;
-        if (y) *y = (int16_t)tp.info[0].y;
+        int rx = (int)tp.info[0].x;
+        int ry = (int)tp.info[0].y;
+        // Reject garbage 0x84 edge frames (bogus coords far outside the panel).
+        if (rx < -64 || ry < -64 ||
+            rx > RM69A10_SCREEN_WIDTH + 64 || ry > RM69A10_SCREEN_HEIGHT + 64) {
+            return false;
+        }
+        int cx = (rx - TOUCH_X_MIN) * RM69A10_SCREEN_WIDTH  / (TOUCH_X_MAX - TOUCH_X_MIN);
+        int cy = (ry - TOUCH_Y_MIN) * RM69A10_SCREEN_HEIGHT / (TOUCH_Y_MAX - TOUCH_Y_MIN);
+        if (cx < 0) { cx = 0; }
+        if (cy < 0) { cy = 0; }
+        if (cx > RM69A10_SCREEN_WIDTH)  { cx = RM69A10_SCREEN_WIDTH; }
+        if (cy > RM69A10_SCREEN_HEIGHT) { cy = RM69A10_SCREEN_HEIGHT; }
+        if (x) *x = (int16_t)cx;
+        if (y) *y = (int16_t)cy;
         return true;
     }
     return false;
