@@ -20,9 +20,6 @@ class DataStore {
   IdentityStore identity_store;
 
   void loadPrefsInt(const char *filename, NodePrefs& prefs);
-  // Byte length of an upstream-written legacy /new_prefs blob (its last field,
-  // default_scope_key, ends at 137). The fork's appended fields start there.
-  static const uint32_t LEGACY_PREFS_UPSTREAM_TAIL = 137;
   void rescueAppendedPrefs(NodePrefs& prefs);
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   void checkAdvBlobFile();

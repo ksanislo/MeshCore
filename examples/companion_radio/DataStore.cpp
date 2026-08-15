@@ -308,6 +308,63 @@ static void applyAppendedPrefsDefaults(NodePrefs& _prefs) {
 // Guarded so it can only ever help: it runs only when the marker field is still
 // at its "never written" value, only on a legacy file long enough to contain the
 // tail, and it persists once so it never runs again.
+// Clamp every fork-added pref to a sane range after any legacy read. Nothing in
+// the old byte format is self-describing, so a short, truncated or
+// slightly-misaligned file turns straight into live settings -- that is how a
+// test device silently ended up with radio_off=1 and an unusable radio.
+// Booleans FAIL SAFE: anything that is not exactly the "off"/"on" value we expect
+// resolves to the harmless choice, never to "disable the user's radio".
+static void sanitiseAppendedPrefs(NodePrefs& p) {
+  p.radio_off = (p.radio_off == 1) ? 1 : 0;          // garbage -> radio ON
+  p.display_rotation = (p.display_rotation <= 4) ? p.display_rotation : 0;
+  p.font_scale       = (p.font_scale <= 3) ? p.font_scale : 0;
+  p.gps_uart         = (p.gps_uart <= 1) ? p.gps_uart : 1;
+  p.contacts_order   = (p.contacts_order <= 2 || p.contacts_order == 0xFF) ? p.contacts_order : 0xFF;
+  p.contacts_filter  = (p.contacts_filter <= 5 || p.contacts_filter == 0xFF) ? p.contacts_filter : 0xFF;
+  p.persist_history  = (p.persist_history <= 1) ? p.persist_history : 0xFF;
+  p.notify_enable    = (p.notify_enable <= 1) ? p.notify_enable : 1;
+  p.use_rtc_clock    = (p.use_rtc_clock <= 1) ? p.use_rtc_clock : 0xFF;
+  p.buzzer_volume    = (p.buzzer_volume <= 10) ? p.buzzer_volume : 0xFF;
+  p.audio_output     = (p.audio_output <= 1) ? p.audio_output : 0xFF;
+  p.power_monitor    = (p.power_monitor <= 1) ? p.power_monitor : 0;
+  p.batt_type        = (p.batt_type <= 2) ? p.batt_type : 0;
+  if (p.batt_capacity_mah > 30000) p.batt_capacity_mah = 0;          // 0 -> default
+  if (p.batt_soc_pmille > 1000 && p.batt_soc_pmille != 0xFFFF) p.batt_soc_pmille = 0xFFFF;
+  if (p.touch_suppress_ms > 1000) p.touch_suppress_ms = 250;
+  if (p.screen_timeout_s > 3600)  p.screen_timeout_s = 0;            // 0 = never
+  if (p.tz_offset_minutes < -840 || p.tz_offset_minutes > 840) p.tz_offset_minutes = 0;
+  if (p.trackball_speed > 60) p.trackball_speed = 0;                 // 0 -> UI default
+  if (p.sigmeter_snr_min < -30 || p.sigmeter_snr_min > 0)  p.sigmeter_snr_min = -12;
+  if (p.sigmeter_snr_max < 0   || p.sigmeter_snr_max > 30) p.sigmeter_snr_max = 6;
+  if (p.sigmeter_hold_s  == 0  || p.sigmeter_hold_s  > 600)  p.sigmeter_hold_s  = 30;
+  if (p.sigmeter_decay_s == 0  || p.sigmeter_decay_s > 3600) p.sigmeter_decay_s = 100;
+  // plain booleans
+  p.clock_12h = !!p.clock_12h;              p.auto_lock = !!p.auto_lock;
+  p.avatar_palette = !!p.avatar_palette;    p.show_chat_meta = !!p.show_chat_meta;
+  p.mention_user_colors = !!p.mention_user_colors;
+  p.hashtag_channel_colors = !!p.hashtag_channel_colors;
+  p.notify_mute_default = !!p.notify_mute_default;
+  p.channel_sender_colors = !!p.channel_sender_colors;
+  p.ota_prerelease = !!p.ota_prerelease;    p.ota_custom_url = !!p.ota_custom_url;
+  p.trackball_invert = !!p.trackball_invert;
+  p.trackball_sel_invert = !!p.trackball_sel_invert;
+  p.tcp_companion = !!p.tcp_companion;      p.ntp_enabled = !!p.ntp_enabled;
+  p.wifi_enabled = !!p.wifi_enabled;        p.wifi_dhcp = !!p.wifi_dhcp;
+  p.wifi_dns_override = !!p.wifi_dns_override;
+  p.mqtt_enabled = !!p.mqtt_enabled;        p.mqtt_tls = !!p.mqtt_tls;
+  p.mqtt_publish_rx = !!p.mqtt_publish_rx;  p.mqtt_publish_tx = !!p.mqtt_publish_tx;
+  // strings must be NUL-terminated even if the file was truncated mid-field
+  p.lock_pin[sizeof(p.lock_pin)-1] = 0;         p.theme_name[sizeof(p.theme_name)-1] = 0;
+  p.wifi_ssid[sizeof(p.wifi_ssid)-1] = 0;       p.wifi_password[sizeof(p.wifi_password)-1] = 0;
+  p.mqtt_host[sizeof(p.mqtt_host)-1] = 0;       p.mqtt_user[sizeof(p.mqtt_user)-1] = 0;
+  p.mqtt_password[sizeof(p.mqtt_password)-1] = 0;
+  p.mqtt_topic_prefix[sizeof(p.mqtt_topic_prefix)-1] = 0;
+  p.mqtt_client_id[sizeof(p.mqtt_client_id)-1] = 0;
+  p.mqtt_subscribe[sizeof(p.mqtt_subscribe)-1] = 0;
+  p.ntp_server[sizeof(p.ntp_server)-1] = 0;     p.ota_url[sizeof(p.ota_url)-1] = 0;
+  p.ringtone_name[sizeof(p.ringtone_name)-1] = 0;
+}
+
 void DataStore::rescueAppendedPrefs(NodePrefs& _prefs) {
   // Marker test: these four all have NON-zero fork defaults (30, 100, 1, 250) and
   // are written on every save by a fork build, so all four reading zero means the
@@ -323,83 +380,95 @@ void DataStore::rescueAppendedPrefs(NodePrefs& _prefs) {
     return;
   }
 
-  File file = openRead(_fs, "/new_prefs");
-  if (!file) return;
-  if (file.size() <= LEGACY_PREFS_UPSTREAM_TAIL || !file.seek(LEGACY_PREFS_UPSTREAM_TAIL)) {
-    file.close();
-    return;
-  }
-  applyAppendedPrefsDefaults(_prefs);   // so a short file still lands on real defaults
-    file.read((uint8_t *)&_prefs.display_brightness, sizeof(_prefs.display_brightness));   // 137
-    file.read((uint8_t *)&_prefs.display_rotation, sizeof(_prefs.display_rotation));       // 138
-    file.read((uint8_t *)&_prefs.contacts_order, sizeof(_prefs.contacts_order));           // 139
-    file.read((uint8_t *)&_prefs.contacts_filter, sizeof(_prefs.contacts_filter));         // 140
-    file.read((uint8_t *)&_prefs.tz_offset_minutes, sizeof(_prefs.tz_offset_minutes));     // 141
-    file.read((uint8_t *)&_prefs.clock_12h, sizeof(_prefs.clock_12h));                     // 143
-    file.read((uint8_t *)&_prefs.persist_history, sizeof(_prefs.persist_history));         // 144
-    file.read((uint8_t *)&_prefs.screen_timeout_s, sizeof(_prefs.screen_timeout_s));       // 145
-    file.read((uint8_t *)&_prefs.radio_off, sizeof(_prefs.radio_off));                     // 147
-    file.read((uint8_t *)_prefs.lock_pin, sizeof(_prefs.lock_pin));                        // 148
-    file.read((uint8_t *)&_prefs.notify_enable, sizeof(_prefs.notify_enable));             // 156
-    file.read((uint8_t *)&_prefs.avatar_palette, sizeof(_prefs.avatar_palette));           // 157
-    file.read((uint8_t *)_prefs.theme_name, sizeof(_prefs.theme_name));                    // 158
-    file.read((uint8_t *)&_prefs.mention_user_colors, sizeof(_prefs.mention_user_colors)); // 159
-    file.read((uint8_t *)&_prefs.hashtag_channel_colors, sizeof(_prefs.hashtag_channel_colors)); // 160
-    file.read((uint8_t *)&_prefs.notify_mute_default, sizeof(_prefs.notify_mute_default));     // 161
-    file.read((uint8_t *)&_prefs.channel_sender_colors, sizeof(_prefs.channel_sender_colors)); // 162
-    file.read((uint8_t *)&_prefs.auto_lock, sizeof(_prefs.auto_lock));                         // 163
-    file.read((uint8_t *)&_prefs.wifi_enabled, sizeof(_prefs.wifi_enabled));                   // 164
-    file.read((uint8_t *)_prefs.wifi_ssid, sizeof(_prefs.wifi_ssid));                          // 165
-    file.read((uint8_t *)_prefs.wifi_password, sizeof(_prefs.wifi_password));                  // 166
-    file.read((uint8_t *)&_prefs.mqtt_enabled, sizeof(_prefs.mqtt_enabled));                   // 167
-    file.read((uint8_t *)_prefs.mqtt_host, sizeof(_prefs.mqtt_host));                          // 168
-    file.read((uint8_t *)&_prefs.mqtt_port, sizeof(_prefs.mqtt_port));                         // 169
-    file.read((uint8_t *)_prefs.mqtt_user, sizeof(_prefs.mqtt_user));                          // 170
-    file.read((uint8_t *)_prefs.mqtt_password, sizeof(_prefs.mqtt_password));                  // 171
-    file.read((uint8_t *)_prefs.mqtt_topic_prefix, sizeof(_prefs.mqtt_topic_prefix));          // 172
-    file.read((uint8_t *)&_prefs.mqtt_tls, sizeof(_prefs.mqtt_tls));                           // 173
-    file.read((uint8_t *)&_prefs.mqtt_publish_rx, sizeof(_prefs.mqtt_publish_rx));             // 174
-    file.read((uint8_t *)&_prefs.mqtt_publish_tx, sizeof(_prefs.mqtt_publish_tx));             // 175
-    file.read((uint8_t *)&_prefs.wifi_dhcp, sizeof(_prefs.wifi_dhcp));                         // 176
-    file.read((uint8_t *)&_prefs.wifi_dns_override, sizeof(_prefs.wifi_dns_override));         // 177
-    file.read((uint8_t *)&_prefs.wifi_ip, sizeof(_prefs.wifi_ip));                             // 178
-    file.read((uint8_t *)&_prefs.wifi_netmask, sizeof(_prefs.wifi_netmask));                   // 179
-    file.read((uint8_t *)&_prefs.wifi_gateway, sizeof(_prefs.wifi_gateway));                   // 180
-    file.read((uint8_t *)&_prefs.wifi_dns, sizeof(_prefs.wifi_dns));                           // 181
-    file.read((uint8_t *)&_prefs.ntp_enabled, sizeof(_prefs.ntp_enabled));                     // 182
-    file.read((uint8_t *)_prefs.ntp_server, sizeof(_prefs.ntp_server));                        // 183
-    file.read((uint8_t *)&_prefs.use_rtc_clock, sizeof(_prefs.use_rtc_clock));                 // 184
-    file.read((uint8_t *)&_prefs.sigmeter_snr_min, sizeof(_prefs.sigmeter_snr_min));           // 185
-    file.read((uint8_t *)&_prefs.sigmeter_snr_max, sizeof(_prefs.sigmeter_snr_max));           // 186
-    file.read((uint8_t *)&_prefs.sigmeter_hold_s, sizeof(_prefs.sigmeter_hold_s));             // 187
-    file.read((uint8_t *)&_prefs.sigmeter_decay_s, sizeof(_prefs.sigmeter_decay_s));           // 188
-    file.read((uint8_t *)&_prefs.show_chat_meta, sizeof(_prefs.show_chat_meta));               // 189
-    file.read((uint8_t *)_prefs.ota_url, sizeof(_prefs.ota_url));                              // 190
-    file.read((uint8_t *)&_prefs.power_monitor, sizeof(_prefs.power_monitor));                 // 191
-    file.read((uint8_t *)&_prefs.batt_type, sizeof(_prefs.batt_type));                         // 192
-    file.read((uint8_t *)&_prefs.batt_capacity_mah, sizeof(_prefs.batt_capacity_mah));         // 193
-    file.read((uint8_t *)&_prefs.batt_soc_pmille, sizeof(_prefs.batt_soc_pmille));             // 194
-    file.read((uint8_t *)&_prefs.gps_uart, sizeof(_prefs.gps_uart));                           // 195
-    file.read((uint8_t *)&_prefs.ota_prerelease, sizeof(_prefs.ota_prerelease));               // 196
-    file.read((uint8_t *)&_prefs.ota_custom_url, sizeof(_prefs.ota_custom_url));               // 197
-    file.read((uint8_t *)&_prefs.trackball_speed, sizeof(_prefs.trackball_speed));             // 198
-    file.read((uint8_t *)&_prefs.trackball_invert, sizeof(_prefs.trackball_invert));           // 199
-    file.read((uint8_t *)&_prefs.font_scale, sizeof(_prefs.font_scale));                       // 200
-    file.read((uint8_t *)&_prefs.touch_suppress_ms, sizeof(_prefs.touch_suppress_ms));         // 201
-    file.read((uint8_t *)_prefs.mqtt_client_id, sizeof(_prefs.mqtt_client_id));                // 202
-    file.read((uint8_t *)_prefs.mqtt_subscribe, sizeof(_prefs.mqtt_subscribe));                // 203
-    file.read((uint8_t *)&_prefs.trackball_sel_invert, sizeof(_prefs.trackball_sel_invert));   // 204
-    file.read((uint8_t *)&_prefs.tcp_companion, sizeof(_prefs.tcp_companion));                 // 205
-    file.read((uint8_t *)&_prefs.buzzer_volume, sizeof(_prefs.buzzer_volume));                 // 206
-    file.read((uint8_t *)_prefs.ringtone_name, sizeof(_prefs.ringtone_name));                  // 207
-    file.read((uint8_t *)&_prefs.audio_output, sizeof(_prefs.audio_output));                   // 208
-  file.close();
+  // Re-run the SAME legacy reader a normal migration uses, into a scratch object.
+  // This is deliberate: an earlier version of this function duplicated the byte
+  // offsets and seeked to a hard-coded 137, which was WRONG (the fork block starts
+  // at 140 -- the "// nnn" comments in savePrefs drift by 3 from autoadd_config on,
+  // and 68 of them are inaccurate). Everything it read was shifted, which silently
+  // set radio_off=1 and filled the UI/battery/OTA fields with garbage on a real
+  // device. There must be exactly ONE place that knows this layout.
+  NodePrefs legacy;                      // ctor + loadPrefsInt apply proper defaults
+  loadPrefsInt("/new_prefs", legacy);    // short/missing file -> fields stay default
 
+  // Copy ONLY the fork-added fields. Upstream's own fields are left alone: they
+  // already migrated correctly via the normal path, and a node that legitimately
+  // ran upstream firmware must keep the settings it configured there.
+  _prefs.display_brightness = legacy.display_brightness;
+  _prefs.display_rotation = legacy.display_rotation;
+  _prefs.contacts_order = legacy.contacts_order;
+  _prefs.contacts_filter = legacy.contacts_filter;
+  _prefs.tz_offset_minutes = legacy.tz_offset_minutes;
+  _prefs.clock_12h = legacy.clock_12h;
+  _prefs.persist_history = legacy.persist_history;
+  _prefs.screen_timeout_s = legacy.screen_timeout_s;
+  _prefs.radio_off = legacy.radio_off;
+  memcpy(_prefs.lock_pin, legacy.lock_pin, sizeof(_prefs.lock_pin));
+  _prefs.notify_enable = legacy.notify_enable;
+  _prefs.avatar_palette = legacy.avatar_palette;
+  memcpy(_prefs.theme_name, legacy.theme_name, sizeof(_prefs.theme_name));
+  _prefs.mention_user_colors = legacy.mention_user_colors;
+  _prefs.hashtag_channel_colors = legacy.hashtag_channel_colors;
+  _prefs.notify_mute_default = legacy.notify_mute_default;
+  _prefs.channel_sender_colors = legacy.channel_sender_colors;
+  _prefs.auto_lock = legacy.auto_lock;
+  _prefs.wifi_enabled = legacy.wifi_enabled;
+  memcpy(_prefs.wifi_ssid, legacy.wifi_ssid, sizeof(_prefs.wifi_ssid));
+  memcpy(_prefs.wifi_password, legacy.wifi_password, sizeof(_prefs.wifi_password));
+  _prefs.mqtt_enabled = legacy.mqtt_enabled;
+  memcpy(_prefs.mqtt_host, legacy.mqtt_host, sizeof(_prefs.mqtt_host));
+  _prefs.mqtt_port = legacy.mqtt_port;
+  memcpy(_prefs.mqtt_user, legacy.mqtt_user, sizeof(_prefs.mqtt_user));
+  memcpy(_prefs.mqtt_password, legacy.mqtt_password, sizeof(_prefs.mqtt_password));
+  memcpy(_prefs.mqtt_topic_prefix, legacy.mqtt_topic_prefix, sizeof(_prefs.mqtt_topic_prefix));
+  _prefs.mqtt_tls = legacy.mqtt_tls;
+  _prefs.mqtt_publish_rx = legacy.mqtt_publish_rx;
+  _prefs.mqtt_publish_tx = legacy.mqtt_publish_tx;
+  _prefs.wifi_dhcp = legacy.wifi_dhcp;
+  _prefs.wifi_dns_override = legacy.wifi_dns_override;
+  _prefs.wifi_ip = legacy.wifi_ip;
+  _prefs.wifi_netmask = legacy.wifi_netmask;
+  _prefs.wifi_gateway = legacy.wifi_gateway;
+  _prefs.wifi_dns = legacy.wifi_dns;
+  _prefs.ntp_enabled = legacy.ntp_enabled;
+  memcpy(_prefs.ntp_server, legacy.ntp_server, sizeof(_prefs.ntp_server));
+  _prefs.use_rtc_clock = legacy.use_rtc_clock;
+  _prefs.sigmeter_snr_min = legacy.sigmeter_snr_min;
+  _prefs.sigmeter_snr_max = legacy.sigmeter_snr_max;
+  _prefs.sigmeter_hold_s = legacy.sigmeter_hold_s;
+  _prefs.sigmeter_decay_s = legacy.sigmeter_decay_s;
+  _prefs.show_chat_meta = legacy.show_chat_meta;
+  memcpy(_prefs.ota_url, legacy.ota_url, sizeof(_prefs.ota_url));
+  _prefs.power_monitor = legacy.power_monitor;
+  _prefs.batt_type = legacy.batt_type;
+  _prefs.batt_capacity_mah = legacy.batt_capacity_mah;
+  _prefs.batt_soc_pmille = legacy.batt_soc_pmille;
+  _prefs.gps_uart = legacy.gps_uart;
+  _prefs.ota_prerelease = legacy.ota_prerelease;
+  _prefs.ota_custom_url = legacy.ota_custom_url;
+  _prefs.trackball_speed = legacy.trackball_speed;
+  _prefs.trackball_invert = legacy.trackball_invert;
+  _prefs.font_scale = legacy.font_scale;
+  _prefs.touch_suppress_ms = legacy.touch_suppress_ms;
+  memcpy(_prefs.mqtt_client_id, legacy.mqtt_client_id, sizeof(_prefs.mqtt_client_id));
+  memcpy(_prefs.mqtt_subscribe, legacy.mqtt_subscribe, sizeof(_prefs.mqtt_subscribe));
+  _prefs.trackball_sel_invert = legacy.trackball_sel_invert;
+  _prefs.tcp_companion = legacy.tcp_companion;
+  _prefs.buzzer_volume = legacy.buzzer_volume;
+  memcpy(_prefs.ringtone_name, legacy.ringtone_name, sizeof(_prefs.ringtone_name));
+  _prefs.audio_output = legacy.audio_output;
+
+  sanitiseAppendedPrefs(_prefs);
   savePrefs(_prefs);   // persist into /prefs.json so this never runs again
 }
 
 void DataStore::loadPrefs(NodePrefs& prefs) {
-  recoverTmp(_fs, "/prefs.json.tmp", "/prefs.json");
+  // NOTE: deliberately NO recoverTmp() for /prefs.json.tmp. A crash during
+  // saveSerial() leaves a TRUNCATED .tmp that is indistinguishable from the
+  // (safe) crash-during-rename case, and promoting it silently installs a
+  // corrupt config -- which is exactly how a test device ended up with a
+  // bogus frequency. Losing the .tmp just falls back to the legacy migration
+  // below, which is always recoverable because /new_prefs is never deleted.
+  _fs->remove("/prefs.json.tmp");
   recoverTmp(_fs, "/new_prefs.tmp", "/new_prefs");   // crash-safe save: promote a leftover tmp
 
   if (_fs->exists("/prefs.json")) {
@@ -408,11 +477,29 @@ void DataStore::loadPrefs(NodePrefs& prefs) {
       prefs.loadSerial(file);   // new Serial prefs
       file.close();
     }
-    // A node that already booted a ConfigSerializer build has a /prefs.json that
-    // was written WITHOUT the fork's appended fields (upstream's legacy reader
-    // stops at its own tail), so the legacy branches below never run again for
-    // it. /new_prefs is deliberately not deleted, so recover them from there.
-    rescueAppendedPrefs(prefs);
+    // Sanity-check what we just loaded. A /prefs.json can be corrupt or partial --
+    // a crashed save, a bad migration, an interrupted write -- and once it exists
+    // the legacy branches below never run again, so a bad file would be permanent
+    // and leave the node unusable (this is not hypothetical: a test device came up
+    // with a bogus frequency and a disabled radio, and nothing could self-correct).
+    // The radio config is the honest canary: no real node has an out-of-band
+    // frequency or an impossible spreading factor.
+    const bool json_sane = (prefs.freq >= 100.0f && prefs.freq <= 1000.0f
+                            && prefs.sf >= 5 && prefs.sf <= 12
+                            && prefs.cr >= 5 && prefs.cr <= 8
+                            && prefs.bw >= 7.0f && prefs.bw <= 500.0f);
+    if (!json_sane && _fs->exists("/new_prefs")) {
+      // Rebuild wholesale from the legacy blob, which is still intact because we
+      // never delete it. Strictly better than keeping a config we know is wrong.
+      loadPrefsInt("/new_prefs", prefs);
+      savePrefs(prefs);
+    } else {
+      // A node that already booted a ConfigSerializer build has a /prefs.json that
+      // was written WITHOUT the fork's appended fields (upstream's legacy reader
+      // stops at its own tail), so the legacy branches below never run again for
+      // it. /new_prefs is deliberately not deleted, so recover them from there.
+      rescueAppendedPrefs(prefs);
+    }
   } else if (_fs->exists("/new_prefs")) {
     loadPrefsInt("/new_prefs", prefs);   // applies the appended defaults first
     savePrefs(prefs);                    // migrate to /prefs.json (keep /new_prefs)
@@ -530,6 +617,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs) {
     // migrate old fields
     _prefs.setRepeatEn(_prefs._client_repeat != 0);
 
+    sanitiseAppendedPrefs(_prefs);   // never let a truncated/odd file become live settings
     file.close();
   }
 }
