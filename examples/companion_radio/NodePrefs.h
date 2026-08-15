@@ -9,6 +9,10 @@
 #define ADVERT_LOC_NONE       0
 #define ADVERT_LOC_SHARE      1
 
+// Bump when the fork's prefs schema changes in a way that makes an older
+// /prefs.json untrustworthy.
+#define COMPANION_PREFS_CFGVER  1
+
 // IMPORTANT: scoped in a namespace because src/helpers/CommonCLI.h declares a
 // DIFFERENT global class also called NodePrefs, and the companion build links both
 // (BridgeBase.h -> CommonCLI.h, via the CompanionMqtt shim). While both were plain
@@ -143,6 +147,17 @@ public:
   uint8_t  buzzer_volume = 0;         // 0 = muted, 1-10 = volume level; 0xFF unset -> 5
   char     ringtone_name[24];         // built-in alert name or SD basename; "" = first built-in
   uint8_t  audio_output = 0;          // 0 = piezo buzzer (default), 1 = I2S speaker; 0xFF unset -> piezo
+
+  // JSON-ONLY config stamp -- never part of the legacy /new_prefs byte layout.
+  // Written on every save by this fork. A /prefs.json that does NOT carry the
+  // current value was produced by something other than this build (upstream
+  // firmware, an older fork build, or a crashed/partial write), and its
+  // fork-specific fields cannot be trusted. Loading such a file triggers a
+  // rebuild from the legacy blob. This replaces an earlier heuristic that
+  // sniffed field VALUES: that misfired on a corrupt file whose garbage
+  // happened to be non-zero, leaving a device permanently broken with no way
+  // to self-correct.
+  uint8_t  cfg_version = 0;
 
 private:
   class RadioPrefs : public ConfigSerializer {  // COPIED from CommonCLI (for now)
@@ -367,6 +382,7 @@ protected:
     def("batt", batt);
     def("ota", ota);
     def("audio", audio);
+    def("cfgver", cfg_version);
   }
 public:
   NodePrefs() : radio(this), gps(this), companion(this),

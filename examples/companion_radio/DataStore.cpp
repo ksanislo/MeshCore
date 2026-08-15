@@ -366,12 +366,10 @@ static void sanitiseAppendedPrefs(NodePrefs& p) {
 }
 
 void DataStore::rescueAppendedPrefs(NodePrefs& _prefs) {
-  // Marker test: these four all have NON-zero fork defaults (30, 100, 1, 250) and
-  // are written on every save by a fork build, so all four reading zero means the
-  // loaded /prefs.json was produced by a build that did not know these fields --
-  // never by ours. A user cannot reach that state through the UI.
-  if (!(_prefs.sigmeter_hold_s == 0 && _prefs.sigmeter_decay_s == 0
-        && _prefs.notify_enable == 0 && _prefs.touch_suppress_ms == 0)) {
+  // Deterministic: a /prefs.json written by this fork always carries the current
+  // cfgver. Anything else -- upstream firmware, an older fork build, or a
+  // truncated/corrupt write -- does not, and its fork fields cannot be trusted.
+  if (_prefs.cfg_version == COMPANION_PREFS_CFGVER) {
     return;   // already fork-written: leave everything alone
   }
   if (!_fs->exists("/new_prefs")) {
@@ -390,9 +388,10 @@ void DataStore::rescueAppendedPrefs(NodePrefs& _prefs) {
   NodePrefs legacy;                      // ctor + loadPrefsInt apply proper defaults
   loadPrefsInt("/new_prefs", legacy);    // short/missing file -> fields stay default
 
-  // Copy ONLY the fork-added fields. Upstream's own fields are left alone: they
-  // already migrated correctly via the normal path, and a node that legitimately
-  // ran upstream firmware must keep the settings it configured there.
+  // Copy the fork-added fields. Upstream's own fields (radio, name, scope...) are
+  // left as loaded: on a genuine upstream->fork upgrade those migrated correctly
+  // and must be preserved. If the JSON itself was corrupt, the caller has already
+  // replaced it wholesale from the legacy blob before we get here.
   _prefs.display_brightness = legacy.display_brightness;
   _prefs.display_rotation = legacy.display_rotation;
   _prefs.contacts_order = legacy.contacts_order;
@@ -623,6 +622,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs) {
 }
 
 bool DataStore::savePrefs(NodePrefs& _prefs) {
+  _prefs.cfg_version = COMPANION_PREFS_CFGVER;   // mark this file as fork-written
   // Crash-safe: write a temp then atomically swap. Upstream writes /prefs.json
   // in place; on SPIFFS a reset mid-rewrite leaves a TRUNCATED live file, which
   // is how a contacts store once went from 350 entries to 27. Do not "simplify"
