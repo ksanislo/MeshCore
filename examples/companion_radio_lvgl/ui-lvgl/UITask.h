@@ -1334,7 +1334,9 @@ private:
   static void admin_perm_dismiss_cb(lv_event_t* e);
 
 public:
-  UITask(mesh::MainBoard* board, BaseSerialInterface* serial)
+  // upstream 1.17 replaced the single BaseSerialInterface with the multi-interface
+  // manager (USB/BLE/WiFi/Ethernet can now be registered together)
+  UITask(mesh::MainBoard* board, MultiSerialInterface* serial)
     : AbstractUITask(board, serial),
       _lgfx(NULL), _node_prefs(NULL), _sensors(NULL),
       _started(false), _last_tick_ms(0), _msgcount(0),

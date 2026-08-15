@@ -299,20 +299,133 @@ static void applyAppendedPrefsDefaults(NodePrefs& _prefs) {
   _prefs.audio_output = 0xFF;                                                             // 208 (0xFF unset -> piezo)
 }
 
-void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) {
-  recoverTmp(_fs, "/new_prefs.tmp", "/new_prefs");
-  if (_fs->exists("/new_prefs")) {
-    loadPrefsInt("/new_prefs", prefs, node_lat, node_lon); // new filename
+// Recover the fork's appended prefs (the 63 UI/WiFi/MQTT/battery/audio fields at
+// byte 137+ of the legacy /new_prefs blob) for a node whose /prefs.json was
+// written by a build that did not know about them -- i.e. any device that booted
+// upstream's ConfigSerializer migration first. Upstream does not delete
+// /new_prefs, so the originals are still on disk.
+//
+// Guarded so it can only ever help: it runs only when the marker field is still
+// at its "never written" value, only on a legacy file long enough to contain the
+// tail, and it persists once so it never runs again.
+void DataStore::rescueAppendedPrefs(NodePrefs& _prefs) {
+  // Marker test: these four all have NON-zero fork defaults (30, 100, 1, 250) and
+  // are written on every save by a fork build, so all four reading zero means the
+  // loaded /prefs.json was produced by a build that did not know these fields --
+  // never by ours. A user cannot reach that state through the UI.
+  if (!(_prefs.sigmeter_hold_s == 0 && _prefs.sigmeter_decay_s == 0
+        && _prefs.notify_enable == 0 && _prefs.touch_suppress_ms == 0)) {
+    return;   // already fork-written: leave everything alone
+  }
+  if (!_fs->exists("/new_prefs")) {
+    applyAppendedPrefsDefaults(_prefs);   // nothing to recover -> at least get real defaults
+    savePrefs(_prefs);
+    return;
+  }
+
+  File file = openRead(_fs, "/new_prefs");
+  if (!file) return;
+  if (file.size() <= LEGACY_PREFS_UPSTREAM_TAIL || !file.seek(LEGACY_PREFS_UPSTREAM_TAIL)) {
+    file.close();
+    return;
+  }
+  applyAppendedPrefsDefaults(_prefs);   // so a short file still lands on real defaults
+    file.read((uint8_t *)&_prefs.display_brightness, sizeof(_prefs.display_brightness));   // 137
+    file.read((uint8_t *)&_prefs.display_rotation, sizeof(_prefs.display_rotation));       // 138
+    file.read((uint8_t *)&_prefs.contacts_order, sizeof(_prefs.contacts_order));           // 139
+    file.read((uint8_t *)&_prefs.contacts_filter, sizeof(_prefs.contacts_filter));         // 140
+    file.read((uint8_t *)&_prefs.tz_offset_minutes, sizeof(_prefs.tz_offset_minutes));     // 141
+    file.read((uint8_t *)&_prefs.clock_12h, sizeof(_prefs.clock_12h));                     // 143
+    file.read((uint8_t *)&_prefs.persist_history, sizeof(_prefs.persist_history));         // 144
+    file.read((uint8_t *)&_prefs.screen_timeout_s, sizeof(_prefs.screen_timeout_s));       // 145
+    file.read((uint8_t *)&_prefs.radio_off, sizeof(_prefs.radio_off));                     // 147
+    file.read((uint8_t *)_prefs.lock_pin, sizeof(_prefs.lock_pin));                        // 148
+    file.read((uint8_t *)&_prefs.notify_enable, sizeof(_prefs.notify_enable));             // 156
+    file.read((uint8_t *)&_prefs.avatar_palette, sizeof(_prefs.avatar_palette));           // 157
+    file.read((uint8_t *)_prefs.theme_name, sizeof(_prefs.theme_name));                    // 158
+    file.read((uint8_t *)&_prefs.mention_user_colors, sizeof(_prefs.mention_user_colors)); // 159
+    file.read((uint8_t *)&_prefs.hashtag_channel_colors, sizeof(_prefs.hashtag_channel_colors)); // 160
+    file.read((uint8_t *)&_prefs.notify_mute_default, sizeof(_prefs.notify_mute_default));     // 161
+    file.read((uint8_t *)&_prefs.channel_sender_colors, sizeof(_prefs.channel_sender_colors)); // 162
+    file.read((uint8_t *)&_prefs.auto_lock, sizeof(_prefs.auto_lock));                         // 163
+    file.read((uint8_t *)&_prefs.wifi_enabled, sizeof(_prefs.wifi_enabled));                   // 164
+    file.read((uint8_t *)_prefs.wifi_ssid, sizeof(_prefs.wifi_ssid));                          // 165
+    file.read((uint8_t *)_prefs.wifi_password, sizeof(_prefs.wifi_password));                  // 166
+    file.read((uint8_t *)&_prefs.mqtt_enabled, sizeof(_prefs.mqtt_enabled));                   // 167
+    file.read((uint8_t *)_prefs.mqtt_host, sizeof(_prefs.mqtt_host));                          // 168
+    file.read((uint8_t *)&_prefs.mqtt_port, sizeof(_prefs.mqtt_port));                         // 169
+    file.read((uint8_t *)_prefs.mqtt_user, sizeof(_prefs.mqtt_user));                          // 170
+    file.read((uint8_t *)_prefs.mqtt_password, sizeof(_prefs.mqtt_password));                  // 171
+    file.read((uint8_t *)_prefs.mqtt_topic_prefix, sizeof(_prefs.mqtt_topic_prefix));          // 172
+    file.read((uint8_t *)&_prefs.mqtt_tls, sizeof(_prefs.mqtt_tls));                           // 173
+    file.read((uint8_t *)&_prefs.mqtt_publish_rx, sizeof(_prefs.mqtt_publish_rx));             // 174
+    file.read((uint8_t *)&_prefs.mqtt_publish_tx, sizeof(_prefs.mqtt_publish_tx));             // 175
+    file.read((uint8_t *)&_prefs.wifi_dhcp, sizeof(_prefs.wifi_dhcp));                         // 176
+    file.read((uint8_t *)&_prefs.wifi_dns_override, sizeof(_prefs.wifi_dns_override));         // 177
+    file.read((uint8_t *)&_prefs.wifi_ip, sizeof(_prefs.wifi_ip));                             // 178
+    file.read((uint8_t *)&_prefs.wifi_netmask, sizeof(_prefs.wifi_netmask));                   // 179
+    file.read((uint8_t *)&_prefs.wifi_gateway, sizeof(_prefs.wifi_gateway));                   // 180
+    file.read((uint8_t *)&_prefs.wifi_dns, sizeof(_prefs.wifi_dns));                           // 181
+    file.read((uint8_t *)&_prefs.ntp_enabled, sizeof(_prefs.ntp_enabled));                     // 182
+    file.read((uint8_t *)_prefs.ntp_server, sizeof(_prefs.ntp_server));                        // 183
+    file.read((uint8_t *)&_prefs.use_rtc_clock, sizeof(_prefs.use_rtc_clock));                 // 184
+    file.read((uint8_t *)&_prefs.sigmeter_snr_min, sizeof(_prefs.sigmeter_snr_min));           // 185
+    file.read((uint8_t *)&_prefs.sigmeter_snr_max, sizeof(_prefs.sigmeter_snr_max));           // 186
+    file.read((uint8_t *)&_prefs.sigmeter_hold_s, sizeof(_prefs.sigmeter_hold_s));             // 187
+    file.read((uint8_t *)&_prefs.sigmeter_decay_s, sizeof(_prefs.sigmeter_decay_s));           // 188
+    file.read((uint8_t *)&_prefs.show_chat_meta, sizeof(_prefs.show_chat_meta));               // 189
+    file.read((uint8_t *)_prefs.ota_url, sizeof(_prefs.ota_url));                              // 190
+    file.read((uint8_t *)&_prefs.power_monitor, sizeof(_prefs.power_monitor));                 // 191
+    file.read((uint8_t *)&_prefs.batt_type, sizeof(_prefs.batt_type));                         // 192
+    file.read((uint8_t *)&_prefs.batt_capacity_mah, sizeof(_prefs.batt_capacity_mah));         // 193
+    file.read((uint8_t *)&_prefs.batt_soc_pmille, sizeof(_prefs.batt_soc_pmille));             // 194
+    file.read((uint8_t *)&_prefs.gps_uart, sizeof(_prefs.gps_uart));                           // 195
+    file.read((uint8_t *)&_prefs.ota_prerelease, sizeof(_prefs.ota_prerelease));               // 196
+    file.read((uint8_t *)&_prefs.ota_custom_url, sizeof(_prefs.ota_custom_url));               // 197
+    file.read((uint8_t *)&_prefs.trackball_speed, sizeof(_prefs.trackball_speed));             // 198
+    file.read((uint8_t *)&_prefs.trackball_invert, sizeof(_prefs.trackball_invert));           // 199
+    file.read((uint8_t *)&_prefs.font_scale, sizeof(_prefs.font_scale));                       // 200
+    file.read((uint8_t *)&_prefs.touch_suppress_ms, sizeof(_prefs.touch_suppress_ms));         // 201
+    file.read((uint8_t *)_prefs.mqtt_client_id, sizeof(_prefs.mqtt_client_id));                // 202
+    file.read((uint8_t *)_prefs.mqtt_subscribe, sizeof(_prefs.mqtt_subscribe));                // 203
+    file.read((uint8_t *)&_prefs.trackball_sel_invert, sizeof(_prefs.trackball_sel_invert));   // 204
+    file.read((uint8_t *)&_prefs.tcp_companion, sizeof(_prefs.tcp_companion));                 // 205
+    file.read((uint8_t *)&_prefs.buzzer_volume, sizeof(_prefs.buzzer_volume));                 // 206
+    file.read((uint8_t *)_prefs.ringtone_name, sizeof(_prefs.ringtone_name));                  // 207
+    file.read((uint8_t *)&_prefs.audio_output, sizeof(_prefs.audio_output));                   // 208
+  file.close();
+
+  savePrefs(_prefs);   // persist into /prefs.json so this never runs again
+}
+
+void DataStore::loadPrefs(NodePrefs& prefs) {
+  recoverTmp(_fs, "/prefs.json.tmp", "/prefs.json");
+  recoverTmp(_fs, "/new_prefs.tmp", "/new_prefs");   // crash-safe save: promote a leftover tmp
+
+  if (_fs->exists("/prefs.json")) {
+    File file = openRead(_fs, "/prefs.json");
+    if (file) {
+      prefs.loadSerial(file);   // new Serial prefs
+      file.close();
+    }
+    // A node that already booted a ConfigSerializer build has a /prefs.json that
+    // was written WITHOUT the fork's appended fields (upstream's legacy reader
+    // stops at its own tail), so the legacy branches below never run again for
+    // it. /new_prefs is deliberately not deleted, so recover them from there.
+    rescueAppendedPrefs(prefs);
+  } else if (_fs->exists("/new_prefs")) {
+    loadPrefsInt("/new_prefs", prefs);   // applies the appended defaults first
+    savePrefs(prefs);                    // migrate to /prefs.json (keep /new_prefs)
   } else if (_fs->exists("/node_prefs")) {
-    loadPrefsInt("/node_prefs", prefs, node_lat, node_lon);
-    savePrefs(prefs, node_lat, node_lon);                // save to new filename
+    loadPrefsInt("/node_prefs", prefs);
+    savePrefs(prefs);
     _fs->remove("/node_prefs"); // remove old
   } else {
     applyAppendedPrefsDefaults(prefs);   // fresh device, no prefs file -> still apply the UI defaults
   }
 }
 
-void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& node_lat, double& node_lon) {
+void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs) {
   File file = openRead(_fs, filename);
   if (file) {
     uint8_t pad[8];
@@ -320,12 +433,12 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     file.read((uint8_t *)&_prefs.airtime_factor, sizeof(float));                           // 0
     file.read((uint8_t *)_prefs.node_name, sizeof(_prefs.node_name));                      // 4
     file.read(pad, 4);                                                                     // 36
-    file.read((uint8_t *)&node_lat, sizeof(node_lat));                                     // 40
-    file.read((uint8_t *)&node_lon, sizeof(node_lon));                                     // 48
+    file.read((uint8_t *)&_prefs.node_lat, sizeof(_prefs.node_lat));                       // 40
+    file.read((uint8_t *)&_prefs.node_lon, sizeof(_prefs.node_lon));                       // 48
     file.read((uint8_t *)&_prefs.freq, sizeof(_prefs.freq));                               // 56
     file.read((uint8_t *)&_prefs.sf, sizeof(_prefs.sf));                                   // 60
     file.read((uint8_t *)&_prefs.cr, sizeof(_prefs.cr));                                   // 61
-    file.read((uint8_t *)&_prefs.client_repeat, sizeof(_prefs.client_repeat));             // 62
+    file.read((uint8_t *)&_prefs._client_repeat, sizeof(_prefs._client_repeat));             // 62
     file.read((uint8_t *)&_prefs.manual_add_contacts, sizeof(_prefs.manual_add_contacts)); // 63
     file.read((uint8_t *)&_prefs.bw, sizeof(_prefs.bw));                                   // 64
     file.read((uint8_t *)&_prefs.tx_power_dbm, sizeof(_prefs.tx_power_dbm));               // 68
@@ -414,113 +527,28 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     file.read((uint8_t *)_prefs.ringtone_name, sizeof(_prefs.ringtone_name));                  // 207
     file.read((uint8_t *)&_prefs.audio_output, sizeof(_prefs.audio_output));                   // 208
 
+    // migrate old fields
+    _prefs.setRepeatEn(_prefs._client_repeat != 0);
+
     file.close();
   }
 }
 
-void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_lon) {
-  File file = openWrite(_fs, "/new_prefs.tmp");   // crash-safe: write temp, then swap
+bool DataStore::savePrefs(NodePrefs& _prefs) {
+  // Crash-safe: write a temp then atomically swap. Upstream writes /prefs.json
+  // in place; on SPIFFS a reset mid-rewrite leaves a TRUNCATED live file, which
+  // is how a contacts store once went from 350 entries to 27. Do not "simplify"
+  // this back to an in-place write.
+  File file = openWrite(_fs, "/prefs.json.tmp");
   if (file) {
-    uint8_t pad[8];
-    memset(pad, 0, sizeof(pad));
-
-    file.write((uint8_t *)&_prefs.airtime_factor, sizeof(float));                           // 0
-    file.write((uint8_t *)_prefs.node_name, sizeof(_prefs.node_name));                      // 4
-    file.write(pad, 4);                                                                     // 36
-    file.write((uint8_t *)&node_lat, sizeof(node_lat));                                     // 40
-    file.write((uint8_t *)&node_lon, sizeof(node_lon));                                     // 48
-    file.write((uint8_t *)&_prefs.freq, sizeof(_prefs.freq));                               // 56
-    file.write((uint8_t *)&_prefs.sf, sizeof(_prefs.sf));                                   // 60
-    file.write((uint8_t *)&_prefs.cr, sizeof(_prefs.cr));                                   // 61
-    file.write((uint8_t *)&_prefs.client_repeat, sizeof(_prefs.client_repeat));             // 62
-    file.write((uint8_t *)&_prefs.manual_add_contacts, sizeof(_prefs.manual_add_contacts)); // 63
-    file.write((uint8_t *)&_prefs.bw, sizeof(_prefs.bw));                                   // 64
-    file.write((uint8_t *)&_prefs.tx_power_dbm, sizeof(_prefs.tx_power_dbm));               // 68
-    file.write((uint8_t *)&_prefs.telemetry_mode_base, sizeof(_prefs.telemetry_mode_base)); // 69
-    file.write((uint8_t *)&_prefs.telemetry_mode_loc, sizeof(_prefs.telemetry_mode_loc));   // 70
-    file.write((uint8_t *)&_prefs.telemetry_mode_env, sizeof(_prefs.telemetry_mode_env));   // 71
-    file.write((uint8_t *)&_prefs.rx_delay_base, sizeof(_prefs.rx_delay_base));             // 72
-    file.write((uint8_t *)&_prefs.advert_loc_policy, sizeof(_prefs.advert_loc_policy));     // 76
-    file.write((uint8_t *)&_prefs.multi_acks, sizeof(_prefs.multi_acks));                   // 77
-    file.write((uint8_t *)&_prefs.path_hash_mode, sizeof(_prefs.path_hash_mode));           // 78
-    file.write(pad, 1);                                                                     // 79
-    file.write((uint8_t *)&_prefs.ble_pin, sizeof(_prefs.ble_pin));                         // 80
-    file.write((uint8_t *)&_prefs.buzzer_quiet, sizeof(_prefs.buzzer_quiet));               // 84
-    file.write((uint8_t *)&_prefs.gps_enabled, sizeof(_prefs.gps_enabled));                 // 85
-    file.write((uint8_t *)&_prefs.gps_interval, sizeof(_prefs.gps_interval));               // 86
-    file.write((uint8_t *)&_prefs.autoadd_config, sizeof(_prefs.autoadd_config));           // 87
-    file.write((uint8_t *)&_prefs.autoadd_max_hops, sizeof(_prefs.autoadd_max_hops));       // 88
-    file.write((uint8_t *)&_prefs.rx_boosted_gain, sizeof(_prefs.rx_boosted_gain));         // 89
-    file.write((uint8_t *)_prefs.default_scope_name, sizeof(_prefs.default_scope_name));    // 90
-    file.write((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key));     // 121
-    // Appended UI fields (must match loadPrefsInt order/offsets).
-    file.write((uint8_t *)&_prefs.display_brightness, sizeof(_prefs.display_brightness));   // 137
-    file.write((uint8_t *)&_prefs.display_rotation, sizeof(_prefs.display_rotation));       // 138
-    file.write((uint8_t *)&_prefs.contacts_order, sizeof(_prefs.contacts_order));           // 139
-    file.write((uint8_t *)&_prefs.contacts_filter, sizeof(_prefs.contacts_filter));         // 140
-    file.write((uint8_t *)&_prefs.tz_offset_minutes, sizeof(_prefs.tz_offset_minutes));     // 141
-    file.write((uint8_t *)&_prefs.clock_12h, sizeof(_prefs.clock_12h));                     // 143
-    file.write((uint8_t *)&_prefs.persist_history, sizeof(_prefs.persist_history));         // 144
-    file.write((uint8_t *)&_prefs.screen_timeout_s, sizeof(_prefs.screen_timeout_s));       // 145
-    file.write((uint8_t *)&_prefs.radio_off, sizeof(_prefs.radio_off));                     // 147
-    file.write((uint8_t *)_prefs.lock_pin, sizeof(_prefs.lock_pin));                        // 148
-    file.write((uint8_t *)&_prefs.notify_enable, sizeof(_prefs.notify_enable));             // 156
-    file.write((uint8_t *)&_prefs.avatar_palette, sizeof(_prefs.avatar_palette));           // 157
-    file.write((uint8_t *)_prefs.theme_name, sizeof(_prefs.theme_name));                    // 158
-    file.write((uint8_t *)&_prefs.mention_user_colors, sizeof(_prefs.mention_user_colors)); // 159
-    file.write((uint8_t *)&_prefs.hashtag_channel_colors, sizeof(_prefs.hashtag_channel_colors)); // 160
-    file.write((uint8_t *)&_prefs.notify_mute_default, sizeof(_prefs.notify_mute_default));     // 161
-    file.write((uint8_t *)&_prefs.channel_sender_colors, sizeof(_prefs.channel_sender_colors)); // 162
-    file.write((uint8_t *)&_prefs.auto_lock, sizeof(_prefs.auto_lock));                         // 163
-    file.write((uint8_t *)&_prefs.wifi_enabled, sizeof(_prefs.wifi_enabled));                   // 164
-    file.write((uint8_t *)_prefs.wifi_ssid, sizeof(_prefs.wifi_ssid));                          // 165
-    file.write((uint8_t *)_prefs.wifi_password, sizeof(_prefs.wifi_password));                  // 166
-    file.write((uint8_t *)&_prefs.mqtt_enabled, sizeof(_prefs.mqtt_enabled));                   // 167
-    file.write((uint8_t *)_prefs.mqtt_host, sizeof(_prefs.mqtt_host));                          // 168
-    file.write((uint8_t *)&_prefs.mqtt_port, sizeof(_prefs.mqtt_port));                         // 169
-    file.write((uint8_t *)_prefs.mqtt_user, sizeof(_prefs.mqtt_user));                          // 170
-    file.write((uint8_t *)_prefs.mqtt_password, sizeof(_prefs.mqtt_password));                  // 171
-    file.write((uint8_t *)_prefs.mqtt_topic_prefix, sizeof(_prefs.mqtt_topic_prefix));          // 172
-    file.write((uint8_t *)&_prefs.mqtt_tls, sizeof(_prefs.mqtt_tls));                           // 173
-    file.write((uint8_t *)&_prefs.mqtt_publish_rx, sizeof(_prefs.mqtt_publish_rx));             // 174
-    file.write((uint8_t *)&_prefs.mqtt_publish_tx, sizeof(_prefs.mqtt_publish_tx));             // 175
-    file.write((uint8_t *)&_prefs.wifi_dhcp, sizeof(_prefs.wifi_dhcp));                         // 176
-    file.write((uint8_t *)&_prefs.wifi_dns_override, sizeof(_prefs.wifi_dns_override));         // 177
-    file.write((uint8_t *)&_prefs.wifi_ip, sizeof(_prefs.wifi_ip));                             // 178
-    file.write((uint8_t *)&_prefs.wifi_netmask, sizeof(_prefs.wifi_netmask));                   // 179
-    file.write((uint8_t *)&_prefs.wifi_gateway, sizeof(_prefs.wifi_gateway));                   // 180
-    file.write((uint8_t *)&_prefs.wifi_dns, sizeof(_prefs.wifi_dns));                           // 181
-    file.write((uint8_t *)&_prefs.ntp_enabled, sizeof(_prefs.ntp_enabled));                     // 182
-    file.write((uint8_t *)_prefs.ntp_server, sizeof(_prefs.ntp_server));                        // 183
-    file.write((uint8_t *)&_prefs.use_rtc_clock, sizeof(_prefs.use_rtc_clock));                 // 184
-    file.write((uint8_t *)&_prefs.sigmeter_snr_min, sizeof(_prefs.sigmeter_snr_min));           // 185
-    file.write((uint8_t *)&_prefs.sigmeter_snr_max, sizeof(_prefs.sigmeter_snr_max));           // 186
-    file.write((uint8_t *)&_prefs.sigmeter_hold_s, sizeof(_prefs.sigmeter_hold_s));             // 187
-    file.write((uint8_t *)&_prefs.sigmeter_decay_s, sizeof(_prefs.sigmeter_decay_s));           // 188
-    file.write((uint8_t *)&_prefs.show_chat_meta, sizeof(_prefs.show_chat_meta));              // 189
-    file.write((uint8_t *)_prefs.ota_url, sizeof(_prefs.ota_url));                             // 190
-    file.write((uint8_t *)&_prefs.power_monitor, sizeof(_prefs.power_monitor));                // 191
-    file.write((uint8_t *)&_prefs.batt_type, sizeof(_prefs.batt_type));                        // 192
-    file.write((uint8_t *)&_prefs.batt_capacity_mah, sizeof(_prefs.batt_capacity_mah));        // 193
-    file.write((uint8_t *)&_prefs.batt_soc_pmille, sizeof(_prefs.batt_soc_pmille));            // 194
-    file.write((uint8_t *)&_prefs.gps_uart, sizeof(_prefs.gps_uart));                          // 195
-    file.write((uint8_t *)&_prefs.ota_prerelease, sizeof(_prefs.ota_prerelease));              // 196
-    file.write((uint8_t *)&_prefs.ota_custom_url, sizeof(_prefs.ota_custom_url));              // 197
-    file.write((uint8_t *)&_prefs.trackball_speed, sizeof(_prefs.trackball_speed));            // 198
-    file.write((uint8_t *)&_prefs.trackball_invert, sizeof(_prefs.trackball_invert));          // 199
-    file.write((uint8_t *)&_prefs.font_scale, sizeof(_prefs.font_scale));                      // 200
-    file.write((uint8_t *)&_prefs.touch_suppress_ms, sizeof(_prefs.touch_suppress_ms));        // 201
-    file.write((uint8_t *)_prefs.mqtt_client_id, sizeof(_prefs.mqtt_client_id));               // 202
-    file.write((uint8_t *)_prefs.mqtt_subscribe, sizeof(_prefs.mqtt_subscribe));               // 203
-    file.write((uint8_t *)&_prefs.trackball_sel_invert, sizeof(_prefs.trackball_sel_invert));  // 204
-    file.write((uint8_t *)&_prefs.tcp_companion, sizeof(_prefs.tcp_companion));                // 205
-    file.write((uint8_t *)&_prefs.buzzer_volume, sizeof(_prefs.buzzer_volume));                // 206
-    file.write((uint8_t *)_prefs.ringtone_name, sizeof(_prefs.ringtone_name));                 // 207
-    file.write((uint8_t *)&_prefs.audio_output, sizeof(_prefs.audio_output));                  // 208
-
+    bool success = _prefs.saveSerial(file);
     file.close();
-    commitTmp(_fs, "/new_prefs.tmp", "/new_prefs");
+    if (success) {
+      commitTmp(_fs, "/prefs.json.tmp", "/prefs.json");
+    }
+    return success;
   }
+  return false;
 }
 
 void DataStore::loadContacts(DataStoreHost* host) {
@@ -885,7 +913,7 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
     uint32_t pos = 0, found_pos = 0;
     uint32_t min_timestamp = 0xFFFFFFFF;
 
-    // search for matching key OR evict by oldest timestmap
+    // search for matching key OR evict by oldest timestamp
     BlobRec tmp;
     file.seek(0);
     while (file.read((uint8_t *) &tmp, sizeof(tmp)) == sizeof(tmp)) {

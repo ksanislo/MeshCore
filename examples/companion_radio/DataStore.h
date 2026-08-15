@@ -19,7 +19,11 @@ class DataStore {
   mesh::RTCClock* _clock;
   IdentityStore identity_store;
 
-  void loadPrefsInt(const char *filename, NodePrefs& prefs, double& node_lat, double& node_lon);
+  void loadPrefsInt(const char *filename, NodePrefs& prefs);
+  // Byte length of an upstream-written legacy /new_prefs blob (its last field,
+  // default_scope_key, ends at 137). The fork's appended fields start there.
+  static const uint32_t LEGACY_PREFS_UPSTREAM_TAIL = 137;
+  void rescueAppendedPrefs(NodePrefs& prefs);
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   void checkAdvBlobFile();
 #endif
@@ -33,8 +37,8 @@ public:
   FILESYSTEM* getSecondaryFS() const { return _fsExtra; }
   bool loadMainIdentity(mesh::LocalIdentity &identity);
   bool saveMainIdentity(const mesh::LocalIdentity &identity);
-  void loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon);
-  void savePrefs(const NodePrefs& prefs, double node_lat, double node_lon);
+  void loadPrefs(NodePrefs& prefs);
+  bool savePrefs(NodePrefs& prefs);
   void loadContacts(DataStoreHost* host);
   void saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c) = NULL);
   bool updateContact(int idx, const ContactInfo& c);  // in-place single-record write

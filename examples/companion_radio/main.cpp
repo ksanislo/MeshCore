@@ -34,19 +34,74 @@ static uint32_t _atoi(const char* sp) {
   return n;
 }
 
+// interface manager
+#include <helpers/MultiSerialInterface.h>
+MultiSerialInterface interface_manager;
+
+// include bluetooth interface
+#if defined(BLE_PIN_CODE)
+  #ifdef ESP32
+    // include esp32 bluetooth interface
+    #include <helpers/esp32/SerialBLEInterface.h>
+    SerialBLEInterface bluetooth_interface;
+  #elif defined(NRF52_PLATFORM)
+    // include nrf52 bluetooth interface
+    #include <helpers/nrf52/SerialBLEInterface.h>
+    SerialBLEInterface bluetooth_interface;
+  #else
+    #error "SerialBLEInterface is not defined for this platform"
+  #endif
+#endif
+
+// include wifi interface
+// NOTE: WITH_WIFI added by the fork -- the interface is selected at RUNTIME from
+// NodePrefs.wifi_enabled, so the object must exist even without a compile-time SSID.
+#if defined(WIFI_SSID) || defined(WITH_WIFI)
+  #ifndef TCP_PORT
+    #define TCP_PORT 5000
+  #endif
+  #ifdef ESP32
+    // include esp32 wifi interface
+    #include <helpers/esp32/SerialWifiInterface.h>
+    SerialWifiInterface wifi_interface;
+  #else
+    #error "SerialWifiInterface is not defined for this platform"
+  #endif
+#endif
+
+// include usb interface
+#if defined(ENABLE_USB_INTERFACE) || defined(WITH_WIFI)
+  #include <helpers/ArduinoSerialInterface.h>
+  ArduinoSerialInterface usb_serial_interface;
+#endif
+
+// include ethernet interface
+#if defined(ETHERNET_ENABLED)
+  #include <helpers/ethernet/EthernetInterface.h>
+  ETHERNET_CLASS ethernet_interface;
+#endif
+
+// include hardware serial interface
+#if defined(SERIAL_RX)
+  #include <helpers/ArduinoSerialInterface.h>
+  ArduinoSerialInterface hardware_serial_interface;
+  HardwareSerial companion_serial(1);
+#endif
+
+// platform file system
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   #include <InternalFileSystem.h>
   #if defined(QSPIFLASH)
     #include <CustomLFS_QSPIFlash.h>
     DataStore store(InternalFS, QSPIFlash, rtc_clock);
   #else
-  #if defined(EXTRAFS)
-    #include <CustomLFS.h>
-    CustomLFS ExtraFS(0xD4000, 0x19000, 128);
-    DataStore store(InternalFS, ExtraFS, rtc_clock);
-  #else
-    DataStore store(InternalFS, rtc_clock);
-  #endif
+    #if defined(EXTRAFS)
+      #include <CustomLFS.h>
+      CustomLFS ExtraFS(0xD4000, 0x19000, 128);
+      DataStore store(InternalFS, ExtraFS, rtc_clock);
+    #else
+      DataStore store(InternalFS, rtc_clock);
+    #endif
   #endif
 #elif defined(RP2040_PLATFORM)
   #include <LittleFS.h>
@@ -56,73 +111,10 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(SPIFFS, rtc_clock);
 #endif
 
-#ifdef ESP32
-  #ifdef WIFI_SSID
-    #include <helpers/esp32/SerialWifiInterface.h>
-    SerialWifiInterface serial_interface;
-    #ifndef TCP_PORT
-      #define TCP_PORT 5000
-    #endif
-  #elif defined(BLE_PIN_CODE)
-    #include <helpers/esp32/SerialBLEInterface.h>
-    SerialBLEInterface serial_interface;
-    #if defined(WITH_WIFI)
-      // WiFi and BLE can't coexist on this chip, so in WiFi mode we never start the
-      // BLE stack and drive the companion frame protocol over USB serial -- or, when the
-      // user opts in (NodePrefs.tcp_companion), over a TCP socket on the LAN (port 5000).
-      #include <helpers/ArduinoSerialInterface.h>
-      ArduinoSerialInterface usb_serial;
-      #include <helpers/esp32/SerialWifiInterface.h>
-      SerialWifiInterface tcp_companion;
-      #ifndef TCP_PORT
-        #define TCP_PORT 5000
-      #endif
-    #endif
-  #elif defined(SERIAL_RX)
-    #include <helpers/ArduinoSerialInterface.h>
-    ArduinoSerialInterface serial_interface;
-    HardwareSerial companion_serial(1);
-  #else
-    #include <helpers/ArduinoSerialInterface.h>
-    ArduinoSerialInterface serial_interface;
-  #endif
-#elif defined(RP2040_PLATFORM)
-  //#ifdef WIFI_SSID
-  //  #include <helpers/rp2040/SerialWifiInterface.h>
-  //  SerialWifiInterface serial_interface;
-  //  #ifndef TCP_PORT
-  //    #define TCP_PORT 5000
-  //  #endif
-  // #elif defined(BLE_PIN_CODE)
-  //   #include <helpers/rp2040/SerialBLEInterface.h>
-  //   SerialBLEInterface serial_interface;
-  #if defined(SERIAL_RX)
-    #include <helpers/ArduinoSerialInterface.h>
-    ArduinoSerialInterface serial_interface;
-    HardwareSerial companion_serial(1);
-  #else
-    #include <helpers/ArduinoSerialInterface.h>
-    ArduinoSerialInterface serial_interface;
-  #endif
-#elif defined(NRF52_PLATFORM)
-  #ifdef BLE_PIN_CODE
-    #include <helpers/nrf52/SerialBLEInterface.h>
-    SerialBLEInterface serial_interface;
-  #else
-    #include <helpers/ArduinoSerialInterface.h>
-    ArduinoSerialInterface serial_interface;
-  #endif
-#elif defined(STM32_PLATFORM)
-  #include <helpers/ArduinoSerialInterface.h>
-  ArduinoSerialInterface serial_interface;
-#else
-  #error "need to define a serial interface"
-#endif
-
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
-  UITask ui_task(&board, &serial_interface);
+  UITask ui_task(&board, &interface_manager);
 #endif
 
 StdRNG fast_rng;
@@ -167,6 +159,10 @@ void setup() {
 
   board.begin();
 
+#ifdef HAS_EXTERNAL_WATCHDOG
+  external_watchdog.begin();
+#endif
+
 #ifdef DISPLAY_CLASS
   DisplayDriver* disp = NULL;
   if (display.begin()) {
@@ -206,13 +202,6 @@ void setup() {
         false
     #endif
   );
-
-#ifdef BLE_PIN_CODE
-  serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
-#else
-  serial_interface.begin(Serial);
-#endif
-  the_mesh.startInterface(serial_interface);
 #elif defined(RP2040_PLATFORM)
   LittleFS.begin();
   store.begin();
@@ -223,22 +212,6 @@ void setup() {
         false
     #endif
   );
-
-  //#ifdef WIFI_SSID
-  //  WiFi.begin(WIFI_SSID, WIFI_PWD);
-  //  serial_interface.begin(TCP_PORT);
-  // #elif defined(BLE_PIN_CODE)
-  //   char dev_name[32+16];
-  //   sprintf(dev_name, "%s%s", BLE_NAME_PREFIX, the_mesh.getNodeName());
-  //   serial_interface.begin(dev_name, the_mesh.getBLEPin());
-  #if defined(SERIAL_RX)
-    companion_serial.setPins(SERIAL_RX, SERIAL_TX);
-    companion_serial.begin(115200);
-    serial_interface.begin(companion_serial);
-  #else
-    serial_interface.begin(Serial);
-  #endif
-    the_mesh.startInterface(serial_interface);
 #elif defined(ESP32)
   SPIFFS.begin(true);
   store.begin();
@@ -249,34 +222,39 @@ void setup() {
         false
     #endif
   );
+#else
+  #error "need to define filesystem"
+#endif
 
 #if defined(WITH_WIFI)
-  // WiFi and BLE can't coexist on this chip. In WiFi mode skip the BLE stack
-  // entirely (frees the RAM esp_wifi_init needs) and drive the companion frame
-  // protocol over USB serial instead, so _serial is a real, begun interface (the
-  // mesh loop calls checkRecvFrame()/writeFrame() unconditionally). Toggling WiFi
-  // needs a reboot to switch stacks.
+  // WiFi and BLE cannot usefully coexist on this chip (esp_wifi_init needs the RAM the
+  // BLE stack holds), so the fork picks ONE at boot from NodePrefs.wifi_enabled -- a
+  // runtime Settings toggle, unlike upstream's compile-time gating. Whichever is chosen
+  // is registered into upstream's interface_manager so the rest of the flow is identical.
+  // Toggling WiFi still needs a reboot to switch stacks.
   if (the_mesh.getNodePrefs()->wifi_enabled) {
     if (the_mesh.getNodePrefs()->tcp_companion) {
       // Companion over the LAN: init the netif now so the server can bind, then listen on
       // TCP_PORT. WiFi itself connects in wifiLoop(); accepts arrive once we have an IP. USB
       // Serial stays free for [REL]/[OTA] diagnostics in this mode.
       WiFi.mode(WIFI_STA);
-      tcp_companion.begin(TCP_PORT);
-      the_mesh.startInterface(tcp_companion);
+      wifi_interface.begin(TCP_PORT);
+      interface_manager.addInterface(InterfaceType::WiFi, &wifi_interface);
     } else {
       g_dbg_serial = false;        // companion now owns USB Serial -> drop [REL]/[OTA] diagnostics (DebugLog.h)
-      usb_serial.begin(Serial);
-      the_mesh.startInterface(usb_serial);
+      usb_serial_interface.begin(Serial);
+      interface_manager.addInterface(InterfaceType::USB, &usb_serial_interface);
     }
   } else {
   #if defined(BLE_PIN_CODE)
-    serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+    bluetooth_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+    interface_manager.addInterface(InterfaceType::Bluetooth, &bluetooth_interface);
   #else
-    serial_interface.begin(Serial);
+    usb_serial_interface.begin(Serial);
+    interface_manager.addInterface(InterfaceType::USB, &usb_serial_interface);
   #endif
-    the_mesh.startInterface(serial_interface);
   }
+  the_mesh.startInterface(interface_manager);
 #elif defined(WIFI_SSID)
   board.setInhibitSleep(true);   // prevent sleep when WiFi is active
   WiFi.setAutoReconnect(true);
@@ -292,23 +270,25 @@ void setup() {
   });
 
   WiFi.begin(WIFI_SSID, WIFI_PWD);
-  serial_interface.begin(TCP_PORT);
-  the_mesh.startInterface(serial_interface);
-#elif defined(BLE_PIN_CODE)
-  serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
-  the_mesh.startInterface(serial_interface);
-#elif defined(SERIAL_RX)
+  wifi_interface.begin(TCP_PORT);
+  interface_manager.addInterface(InterfaceType::WiFi, &wifi_interface);
+#endif
+
+// add usb interface
+#if defined(ENABLE_USB_INTERFACE)
+  usb_serial_interface.begin(Serial);
+  interface_manager.addInterface(InterfaceType::USB, &usb_serial_interface);
+#endif
+
+// add hardware serial interface
+#if defined(SERIAL_RX)
   companion_serial.setPins(SERIAL_RX, SERIAL_TX);
   companion_serial.begin(115200);
-  serial_interface.begin(companion_serial);
-  the_mesh.startInterface(serial_interface);
-#else
-  serial_interface.begin(Serial);
-  the_mesh.startInterface(serial_interface);
+  hardware_serial_interface.begin(companion_serial);
+  interface_manager.addInterface(InterfaceType::HardwareSerial, &hardware_serial_interface);
 #endif
-#else
-  #error "need to define filesystem"
-#endif
+
+  the_mesh.startInterface(interface_manager);
 
 #if defined(ELECROW_CROWPANEL_ADVANCE_35) && (ENV_INCLUDE_GPS == 1)
   // CrowPanel GPS bring-up is DEFERRED to after ui_task.begin() (see below): the GPS UART (17/18)
@@ -418,11 +398,15 @@ void loop() {
 #ifndef MESH_PROXY
   the_mesh.loop();   // single-core builds keep the mesh on the Arduino loop
 #endif
+  interface_manager.loop();
   sensors.loop();
 #ifdef DISPLAY_CLASS
   ui_task.loop();    // LVGL render + input + event drain, on core 1
 #endif
   rtc_clock.tick();
+#ifdef HAS_EXTERNAL_WATCHDOG
+  external_watchdog.loop();
+#endif
 
   if (!the_mesh.hasPendingWork()) {
 #if defined(NRF52_PLATFORM)
