@@ -9,6 +9,20 @@
 #define ADVERT_LOC_NONE       0
 #define ADVERT_LOC_SHARE      1
 
+// IMPORTANT: scoped in a namespace because src/helpers/CommonCLI.h declares a
+// DIFFERENT global class also called NodePrefs, and the companion build links both
+// (BridgeBase.h -> CommonCLI.h, via the CompanionMqtt shim). While both were plain
+// structs the duplicate name was a benign ODR violation -- no vtables, so nothing
+// was ever dispatched across the two layouts. Once upstream made both classes
+// ConfigSerializer subclasses with a virtual structure(), the linker deduplicated
+// the two identically-named weak vtable symbols and the companion's object got the
+// REPEATER's vtable: structure() then walked the repeater's field list over the
+// companion's memory and NULL-deref'd on the first sub-config. Distinct namespaces
+// give distinct mangled vtable symbols. The trailing `using` keeps every existing
+// reference to plain `NodePrefs` compiling; a TU that wrongly includes both headers
+// now fails to compile (ambiguity) instead of corrupting itself at runtime.
+namespace companion {
+
 class NodePrefs : public ConfigSerializer {  // persisted to file
 public:
   float airtime_factor = 0;
@@ -379,3 +393,7 @@ public:
   bool isRepeatEn() const { return repeat.disable_fwd == 0; }
   void setRepeatEn(bool en) { repeat.disable_fwd = en ? 0 : 1; }
 };
+
+}  // namespace companion
+
+using companion::NodePrefs;
